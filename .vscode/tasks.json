@@ -1,0 +1,34 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["-S", "${workspaceFolder}", "-B", "${workspaceFolder}/build", "-DCMAKE_BUILD_TYPE=Release"],
+            "problemMatcher": []
+        },
+        {
+            "label": "CMake: build",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--build", "${workspaceFolder}/build", "-j"],
+            "dependsOn": "CMake: configure",
+            "problemMatcher": ["$gcc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Run argus",
+            "type": "shell",
+            "command": "./argus",
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "dependsOn": "CMake: build",
+            "problemMatcher": []
+        }
+    ]
+}

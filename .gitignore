@@ -1,0 +1,9 @@
+# Build output
+build/
+
+# Large or private assets: keep locally, not in the repo
+spare files/
+config/artwork.*
+
+# Per-user Claude Code settings
+.claude/settings.local.json

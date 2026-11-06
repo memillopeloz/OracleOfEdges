@@ -125,6 +125,9 @@ All four methods are always built. The user chooses which methods to run for eac
 photo (one or several), and the results are shown as a table with coordinate,
 confidence, and timing per selected method.
 
+New to these techniques? [How the matching methods work](#how-the-matching-methods-work)
+at the end of this page explains each one in plain terms.
+
 ## Project structure
 
 ```
@@ -157,3 +160,95 @@ OracleOfEdges/
 │   └── cdp.mjs            ← headless browser driver
 └── CMakeLists.txt
 ```
+
+## How the matching methods work
+
+Argus has to answer one question: *where in the big picture does this small
+piece belong?* Each method answers it differently, so they succeed and fail on
+different pieces. That's why you can run several at once and compare.
+
+Before any method runs, Argus prepares the photo the same way for all of them:
+it keeps only the piece (using the outline you confirmed), turns it so its
+straight edges are level, and trims the ragged border. A piece can still be
+upside down or on its side at this point, so methods that care about direction
+try all four quarter-turns.
+
+### Template
+
+**The idea:** slide the piece over the picture like a stencil and, at every
+spot, measure how well the pattern of light and dark matches.
+
+Think of holding a small transparent photo over a large poster and moving it
+around until the shapes underneath line up. Template does exactly that, at
+every position, in all four orientations. To keep it fast, it first works on a
+shrunken copy of the picture, then double-checks its best few guesses at a
+finer size.
+
+- **Good at:** pieces with clear shapes and edges: architecture, frames, text.
+- **Struggles with:** large plain areas (sky, walls), where many spots look the same.
+- **Speed:** the slowest, a couple of seconds per piece.
+
+### ML (machine learning)
+
+**The idea:** let a neural network "describe" the piece and every part of the
+picture, then find the part whose description is closest.
+
+The network (MobileNetV2) was trained on millions of everyday photos to
+recognise things. Argus doesn't use it to name objects; it uses the network's
+internal summary of an image: a list of 1,280 numbers capturing textures,
+shapes and colours. At startup Argus summarises every piece-sized region of
+the picture; for each photo it summarises the piece and picks the most similar
+region.
+
+- **Good at:** recognising *kinds* of content (foliage, fabric, stone) even when
+  the details are blurry.
+- **Struggles with:** telling apart regions that contain the same kind of thing,
+  which is common in a painting with lots of similar areas. It is the weakest
+  method here.
+- **Speed:** fast per photo (well under a second), but it makes the server take
+  longer to start.
+
+### Histogram
+
+**The idea:** compare *which colours* appear and how much of each, ignoring
+where they are.
+
+Imagine sorting all the piece's pixels into colour buckets (so much reddish,
+so much bluish…) and doing the same for every piece-sized region of the
+picture. The region whose buckets fill up most like the piece's is the answer.
+Because position is ignored, rotation doesn't matter at all.
+
+- **Good at:** pieces with distinctive colours, and it's very fast.
+- **Struggles with:** anything that changes colour between the screen and the
+  table, such as warm room lighting or a puzzle printed in muted or sepia
+  tones. Then it can be confidently wrong.
+- **Speed:** the fastest, a few hundredths of a second.
+
+### Keypoint
+
+**The idea:** find small distinctive spots (corners, sharp details) on the
+piece, find the same kind of spots in the picture, and look for a group that
+matches *with the same arrangement*.
+
+It works like recognising a constellation: one star tells you little, but five
+stars in the right pattern are unmistakable. Argus finds such spots
+("keypoints") all over the picture at startup, matches the piece's spots to
+them, and then checks that the matched spots sit in the same geometric
+arrangement, allowing for rotation and size. Spots that agree on one location
+win.
+
+- **Good at:** detailed areas, and its confidence is the most trustworthy: when
+  it is wrong it usually says so with a confidence near zero.
+- **Struggles with:** soft or plain pieces that have few sharp details; then it
+  may find nothing and report no result.
+- **Speed:** a second or two per piece.
+
+### Reading the results
+
+- **Cell** is the grid square the method thinks the piece belongs in.
+- **Confidence** (0–100%) is the method's own sense of how sure it is. Each
+  method measures it differently, so compare confidence within a method, not
+  across methods. A 30% from Keypoint can mean more than a 95% from Histogram.
+- **When methods agree**, the answer is much more likely to be right. When they
+  disagree, trust Keypoint first if its confidence is clearly above zero.
+

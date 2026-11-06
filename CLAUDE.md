@@ -54,7 +54,9 @@ Each matcher lives in `src/matchers/` (`.hpp` + `.cpp`) and inherits from `Match
 - **HistogramMatcher** — masked H-S histogram (18×16 bins) correlation vs. piece-sized tiles at half-piece stride; ~20 ms.
 - **KeypointMatcher** — ORB, ~150 artwork features per piece (cap 800k) spread per cell; piece ORB uses a 12-level ×1.3 pyramid to bridge photo vs. artwork scale. Brute-force Hamming in chunks of 200k (BFMatcher's per-set limit is 2^18) + ratio test + RANSAC homography of the piece centre, falling back to per-cell voting. Best-calibrated confidence (≈0 when wrong).
 
-**Benchmark:** `tools/bench.cpp` → `argus_bench [config-dir] [samples] [pieces...]` (run from `build/`). Simulates client cut-outs (jigsaw mask, rotation, lighting, blur, noise, JPEG) from the artwork and reports per-matcher accuracy, time, and mean confidence on hits vs. misses. Fixed seed, so runs are comparable — re-run it after any matcher change. Baseline (40 samples, 10587×6800 artwork, 5000 pieces): Template 60%, Keypoint 67%, Histogram 60%, ML 17%; startup ~28 s.
+**Benchmark:** `tools/bench.cpp` → `argus_bench [config-dir] [samples] [pieces...]` (run from `build/`). Simulates client cut-outs (jigsaw mask, rotation, lighting, blur, noise, JPEG) from the artwork and reports per-matcher accuracy, time, and mean confidence on hits vs. misses. Fixed seed, so runs are comparable — re-run it after any matcher change.
+
+**Page test:** `node tools/webtest.mjs <url> <photo> <outPrefix> [sensitivity]` drives headless Brave (override with `ARGUS_BROWSER`; not `BROWSER`, which this desktop sets to a Firefox stub) over the DevTools pipe through photo → outline → locate at phone size, saving screenshots and printing the results table and any JS errors. Needs a running server. Baseline (40 samples, 10587×6800 artwork, 5000 pieces): Template 60%, Keypoint 67%, Histogram 60%, ML 17%; startup ~28 s.
 
 ## Config format
 

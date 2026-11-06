@@ -12,7 +12,7 @@ public:
     // Builds every matcher and prepares them against the artwork (in parallel)
     WebHandler(cv::Mat artwork, GridConfig grid, std::string modelPath);
 
-    // JSON API used by the web page (provisional routes, see registerRoutes)
+    // JSON API used by the web page (routes listed in WebHandler.cpp)
     void registerRoutes(httplib::Server& svr);
 
     // Names of all matchers, in display order

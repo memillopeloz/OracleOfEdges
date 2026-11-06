@@ -7,3 +7,6 @@ config/artwork.*
 
 # Per-user Claude Code settings
 .claude/settings.local.json
+
+# Real piece photos for scoring (large, and show the artwork)
+samples/

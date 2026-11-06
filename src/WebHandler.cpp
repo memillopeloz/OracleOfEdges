@@ -49,7 +49,7 @@ WebHandler::WebHandler(cv::Mat artwork, GridConfig grid, std::string modelPath)
                  {cv::IMWRITE_JPEG_QUALITY, 85});
 }
 
-// Provisional routes, to be settled with the user:
+// Routes:
 //   GET  /api/info     grid layout and matchers (name, available)
 //   GET  /api/artwork  downscaled artwork JPEG for the overview
 //   POST /api/locate   multipart: "piece" = PNG cut-out (alpha = outline),

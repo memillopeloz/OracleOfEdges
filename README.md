@@ -81,6 +81,14 @@ cd build
 ./argus_bench config 40 1000 5000   # compare piece counts
 ```
 
+To score real photos, put them in `samples/` named by their true cell
+(`C5.jpg`, `C5_2.jpg`, …), cut them out with the page's own code, then score:
+
+```bash
+node tools/cutsamples.mjs                     # samples/ → samples/cut/
+cd build && ./argus_bench config --real ../samples/cut
+```
+
 ## Grid configuration
 
 `config/grid.json` supports full customization:
@@ -140,8 +148,12 @@ OracleOfEdges/
 ├── web/                   ← the page served at /
 │   ├── index.html, style.css
 │   ├── app.js             ← UI, upload, results
+│   ├── photo.js           ← decode, preview, cut-out PNG
 │   └── cutout.js          ← piece outline detection
 ├── tools/
-│   └── bench.cpp          ← argus_bench
+│   ├── bench.cpp          ← argus_bench
+│   ├── cutsamples.mjs     ← cut out samples/ like the page
+│   ├── webtest.mjs        ← end-to-end page test
+│   └── cdp.mjs            ← headless browser driver
 └── CMakeLists.txt
 ```

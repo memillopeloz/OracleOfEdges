@@ -1,9 +1,7 @@
 // Argus client: photo → outline preview → cut-out upload → results table.
 import { findPiece } from './cutout.js';
+import { cutoutPng, decodePhoto, drawOutline, workCopy } from './photo.js';
 
-const WORK_MAX_DIM   = 800;    // outline detection runs at this size
-const UPLOAD_MAX_DIM = 1024;   // longest side of the uploaded cut-out
-const CROP_MARGIN    = 0.03;   // extra border around the piece, relative to the photo
 const MATCHER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#14b8a6'];
 const STORAGE_KEY    = 'argus.matchers';
 
@@ -64,21 +62,8 @@ function renderMatchers() {
 // ── Photo and outline ───────────────────────────────────────────────────────
 
 async function loadPhoto(file) {
-    let bitmap;
-    try {
-        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    } catch {
-        bitmap = await createImageBitmap(file);
-    }
-    const scale = Math.min(1, WORK_MAX_DIM / Math.max(bitmap.width, bitmap.height));
-    const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(bitmap, 0, 0, w, h);
-
-    state.photo = bitmap;
-    state.work = { canvas, rgba: ctx.getImageData(0, 0, w, h).data, w, h };
+    state.photo = await decodePhoto(file);
+    state.work = workCopy(state.photo);
     $('sensitivity').value = 1;
     $('results').hidden = true;
     $('preview').hidden = false;
@@ -88,12 +73,20 @@ async function loadPhoto(file) {
 
 function detect() {
     const { rgba, w, h } = state.work;
-    state.found = findPiece(rgba, w, h, Number($('sensitivity').value));
+    const found = findPiece(rgba, w, h, Number($('sensitivity').value));
+    state.found = found;
     state.cutout = null;
-    drawPreview();
+    drawOutline($('preview-canvas'), state.work, found);
     describeOutline();
     updateLocateButton();
-    if (outlineUsable()) buildCutout();
+    if (outlineUsable()) {
+        cutoutPng(state.photo, state.work, found).then((blob) => {
+            if (state.found === found) {   // ignore if the outline changed meanwhile
+                state.cutout = blob;
+                updateLocateButton();
+            }
+        });
+    }
 }
 
 function outlineUsable() {
@@ -121,80 +114,6 @@ function describeOutline() {
     const el = $('outline-status');
     el.textContent = text;
     el.dataset.level = level;
-}
-
-// Photo with the background dimmed and the outline traced
-function drawPreview() {
-    const { canvas: src, w, h } = state.work;
-    const canvas = $('preview-canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(src, 0, 0);
-    const mask = state.found && state.found.mask;
-    if (mask) {
-        const img = ctx.getImageData(0, 0, w, h);
-        const px = img.data;
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const p = y * w + x, i = p * 4;
-                const edge = mask[p] && (x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
-                    !mask[p - 1] || !mask[p + 1] || !mask[p - w] || !mask[p + w]);
-                if (edge) {
-                    px[i] = 255; px[i + 1] = 214; px[i + 2] = 10;
-                } else if (!mask[p]) {
-                    px[i] *= 0.35; px[i + 1] *= 0.35; px[i + 2] *= 0.35;
-                }
-            }
-        }
-        ctx.putImageData(img, 0, 0);
-    }
-}
-
-// Full-resolution crop of the piece with alpha = outline, as a PNG
-function buildCutout() {
-    const { bbox, mask } = state.found;
-    const { w, h } = state.work;
-    const photo = state.photo;
-    const k = photo.width / w;
-    const margin = Math.round(Math.max(w, h) * CROP_MARGIN);
-    const x0 = Math.max(0, bbox.x - margin), y0 = Math.max(0, bbox.y - margin);
-    const x1 = Math.min(w, bbox.x + bbox.w + margin), y1 = Math.min(h, bbox.y + bbox.h + margin);
-
-    const srcW = (x1 - x0) * k, srcH = (y1 - y0) * k;
-    const scale = Math.min(1, UPLOAD_MAX_DIM / Math.max(srcW, srcH));
-    const outW = Math.max(1, Math.round(srcW * scale)), outH = Math.max(1, Math.round(srcH * scale));
-
-    // Low-res mask as alpha, scaled up with smoothing and re-thresholded for a clean edge
-    const maskCanvas = document.createElement('canvas');
-    maskCanvas.width = x1 - x0; maskCanvas.height = y1 - y0;
-    const mctx = maskCanvas.getContext('2d');
-    const mimg = mctx.createImageData(maskCanvas.width, maskCanvas.height);
-    for (let y = y0; y < y1; y++) {
-        for (let x = x0; x < x1; x++) {
-            mimg.data[((y - y0) * maskCanvas.width + (x - x0)) * 4 + 3] = mask[y * w + x] ? 255 : 0;
-        }
-    }
-    mctx.putImageData(mimg, 0, 0);
-
-    const out = document.createElement('canvas');
-    out.width = outW; out.height = outH;
-    const octx = out.getContext('2d', { willReadFrequently: true });
-    octx.imageSmoothingQuality = 'high';
-    octx.drawImage(maskCanvas, 0, 0, outW, outH);
-    const alpha = octx.getImageData(0, 0, outW, outH).data;
-    octx.clearRect(0, 0, outW, outH);
-    octx.drawImage(photo, x0 * k, y0 * k, srcW, srcH, 0, 0, outW, outH);
-    const img = octx.getImageData(0, 0, outW, outH);
-    for (let i = 3; i < img.data.length; i += 4) img.data[i] = alpha[i] >= 128 ? 255 : 0;
-    octx.putImageData(img, 0, 0);
-
-    const token = state.found;
-    out.toBlob((blob) => {
-        if (state.found === token) {   // ignore if the outline changed meanwhile
-            state.cutout = blob;
-            updateLocateButton();
-        }
-    }, 'image/png');
 }
 
 // ── Locate ──────────────────────────────────────────────────────────────────

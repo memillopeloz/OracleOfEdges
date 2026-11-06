@@ -9,12 +9,18 @@
 //   config-dir  default: config
 //   samples     simulated pieces per run (default: 40)
 //   pieces      piece counts to test (default: the value in grid.json; 0 = unknown)
+//
+//        argus_bench <config-dir> --real <cut-dir>
+//   Scores real cut-outs (from tools/cutsamples.mjs) instead. Each file is named
+//   by its true cell, optionally with a suffix: C5.png, C5_2.png. Prints one
+//   line per photo and the same summary as the simulated run.
 #include "GridConfig.hpp"
 #include "WebHandler.hpp"
 #include "matchers/MatcherUtils.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -84,6 +90,19 @@ cv::Mat simulateCutout(const cv::Mat& art, cv::Point2f c, double side, std::mt19
     return bgra(cv::boundingRect(mask)).clone();
 }
 
+void printTallies(const std::vector<std::string>& names, std::map<std::string, Tally>& tallies,
+                  int samples) {
+    std::printf("  %-10s %8s %10s %14s\n", "matcher", "accuracy", "avg time", "conf hit/miss");
+    for (const std::string& n : names) {
+        const Tally& t = tallies[n];
+        const int misses = samples - t.hits;
+        std::printf("  %-10s %7d%% %7ld ms %8.2f / %.2f\n", n.c_str(), 100 * t.hits / samples,
+                    t.totalMs / samples, t.hits ? t.confHit / t.hits : 0.0,
+                    misses ? t.confMiss / misses : 0.0);
+    }
+    std::fflush(stdout);
+}
+
 void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath, int samples) {
     const auto t0 = std::chrono::steady_clock::now();
     const WebHandler handler(art, grid, modelPath);
@@ -111,15 +130,67 @@ void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath,
 
     std::printf("\npieces=%d (piece ≈ %.0f px in artwork), %d samples, prepare %ld ms\n",
                 grid.pieces, side, samples, prepareMs);
-    std::printf("  %-10s %8s %10s %14s\n", "matcher", "accuracy", "avg time", "conf hit/miss");
-    for (const std::string& n : names) {
-        const Tally& t = tallies[n];
-        const int misses = samples - t.hits;
-        std::printf("  %-10s %7d%% %7ld ms %8.2f / %.2f\n", n.c_str(), 100 * t.hits / samples,
-                    t.totalMs / samples, t.hits ? t.confHit / t.hits : 0.0,
-                    misses ? t.confMiss / misses : 0.0);
+    printTallies(names, tallies, samples);
+}
+
+// Cell (col, row) whose label matches the file name up to the first '_'; (-1, -1) if none
+cv::Point cellFromName(const GridConfig& grid, const std::string& stem) {
+    const std::string label = stem.substr(0, stem.find('_'));
+    cv::Point cell(-1, -1);
+    for (const GridCell& c : grid.allCells())
+        if (c.label == label)
+            cell = cv::Point(c.col, c.row);
+    return cell;
+}
+
+void runReal(const cv::Mat& art, const GridConfig& grid, const std::string& modelPath,
+             const std::string& cutDir) {
+    std::vector<fs::path> files;
+    for (const auto& entry : fs::directory_iterator(cutDir))
+        if (entry.is_regular_file() && entry.path().extension() == ".png")
+            files.push_back(entry.path());
+    std::sort(files.begin(), files.end());
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const WebHandler handler(art, grid, modelPath);
+    const long prepareMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - t0).count();
+    const std::vector<std::string> names = handler.matcherNames();
+    std::map<std::string, Tally> tallies;
+
+    std::printf("\n  %-8s %-5s", "photo", "truth");
+    for (const std::string& n : names)
+        std::printf(" %-10s", n.c_str());
+    std::printf("\n");
+
+    int scored = 0;
+    for (const fs::path& file : files) {
+        const cv::Point truth = cellFromName(grid, file.stem().string());
+        const cv::Mat cutout = cv::imread(file.string(), cv::IMREAD_UNCHANGED);
+        if (truth.x < 0 || cutout.empty()) {
+            std::printf("  %-8s skipped (%s)\n", file.stem().string().c_str(),
+                        truth.x < 0 ? "name is not a cell label" : "unreadable");
+        } else {
+            ++scored;
+            std::printf("  %-8s %-5s", file.stem().string().c_str(),
+                        grid.coordLabel(truth.y, truth.x).c_str());
+            for (const MatchResult& r : handler.locate(cutout, names)) {
+                Tally& t = tallies[r.matcherName];
+                const bool hit = r.row == truth.y && r.col == truth.x;
+                t.hits    += hit;
+                t.totalMs += r.timeMs;
+                (hit ? t.confHit : t.confMiss) += r.confidence;
+                const std::string answer = r.error.empty() ? r.coord : "-";
+                std::printf(" %s %-8s", hit ? "+" : " ", answer.c_str());
+            }
+            std::printf("\n");
+            std::fflush(stdout);
+        }
     }
-    std::fflush(stdout);
+
+    std::printf("\nreal cut-outs from %s: %d scored, prepare %ld ms\n", cutDir.c_str(), scored, prepareMs);
+    if (scored > 0)
+        printTallies(names, tallies, scored);
 }
 
 } // namespace
@@ -128,7 +199,8 @@ int main(int argc, char* argv[]) {
     int status = 0;
     try {
         const std::string configDir = argc > 1 ? argv[1] : "config";
-        const int samples = argc > 2 ? std::stoi(argv[2]) : 40;
+        const bool real = argc > 3 && std::string(argv[2]) == "--real";
+        const int samples = argc > 2 && !real ? std::stoi(argv[2]) : 40;
 
         const GridConfig grid = GridConfig::fromFile((fs::path(configDir) / "grid.json").string());
         const cv::Mat art = cv::imread(grid.artworkPath, cv::IMREAD_COLOR);
@@ -136,7 +208,7 @@ int main(int argc, char* argv[]) {
         const std::string modelPath = fs::exists(model) ? model : "";
 
         std::vector<int> pieceCounts;
-        for (int i = 3; i < argc; ++i)
+        for (int i = 3; i < argc && !real; ++i)
             pieceCounts.push_back(std::stoi(argv[i]));
         if (pieceCounts.empty())
             pieceCounts.push_back(grid.pieces);
@@ -144,6 +216,8 @@ int main(int argc, char* argv[]) {
         if (art.empty()) {
             std::fprintf(stderr, "[error] Cannot read artwork: %s\n", grid.artworkPath.c_str());
             status = 2;
+        } else if (real) {
+            runReal(art, grid, modelPath, argv[3]);
         } else {
             for (int pieces : pieceCounts) {
                 GridConfig variant = grid;

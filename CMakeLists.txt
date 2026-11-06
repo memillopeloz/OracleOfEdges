@@ -82,12 +82,15 @@ target_link_libraries(argus PRIVATE argus_core)
 add_executable(argus_bench tools/bench.cpp)
 target_link_libraries(argus_bench PRIVATE argus_core)
 
-# ── Copy config/ folder to build directory after build ────────────────────────
+# ── Copy config/ and web/ to build directory after build ────────────────────────
 add_custom_command(TARGET argus POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/config
         $<TARGET_FILE_DIR:argus>/config
-    COMMENT "Copying config/ to build directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/web
+        $<TARGET_FILE_DIR:argus>/web
+    COMMENT "Copying config/ and web/ to build directory"
 )
 
 # ── Defaults ──────────────────────────────────────────────────────────────────

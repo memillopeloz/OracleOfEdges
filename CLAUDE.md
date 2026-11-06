@@ -18,12 +18,12 @@ Targets: `argus_core` (static lib: everything but `main.cpp`), `argus` (server),
 
 ## Run
 
-The binary must be run from the `build/` directory (CMake copies `config/` there post-build):
+The binary must be run from the `build/` directory (CMake copies `config/` and `web/` there post-build):
 
 ```bash
 cd build
 ./argus
-./argus --port 8080 --config-dir ../config
+./argus --port 8080 --config-dir ../config --web-dir ../web
 ```
 
 Required before first run: place `artwork.jpg` (or `.png`/`.bmp`) in `config/`.
@@ -32,7 +32,7 @@ VS Code: the default build task configures and builds with CMake; IntelliSense r
 
 ## Architecture
 
-The server flow is: HTTP upload (piece photo + the set of matchers the user selected) → `WebHandler` → selected `Matcher` instances in parallel → results rendered as an HTML table (coordinate, confidence, time per method). The server never votes or picks a winner; the user compares results. The exact HTTP routes are still undecided — keep the matching logic separate from route registration.
+The server flow is: HTTP upload (piece photo + the set of matchers the user selected) → `WebHandler` → selected `Matcher` instances in parallel → results rendered as an HTML table (coordinate, confidence, time per method). The server never votes or picks a winner; the user compares results. The HTTP routes are provisional until settled with the user — keep the matching logic separate from route registration.
 
 **`Matcher` (abstract interface, [src/Matcher.hpp](src/Matcher.hpp))** — lifecycle is `prepare(artwork, grid)` once at startup (precompute per-cell crops/histograms/keypoints/embeddings, keep the grid), then `match(piece) const → MatchResult` per request. `match` runs concurrently from multiple threads and must not mutate state. `available()` returns false when a matcher can't run (e.g. ML model missing). `MatchResult` carries row, col, coord string (e.g. `"B3"`), confidence (0.0–1.0), `timeMs`, matcher name, and `error` (empty on success). Build results with `matcher_utils::makeResult`, which stamps label and elapsed time.
 
@@ -40,9 +40,9 @@ The server flow is: HTTP upload (piece photo + the set of matchers the user sele
 
 **`GridConfig` ([src/GridConfig.hpp](src/GridConfig.hpp))** — parses `grid.json`; key methods are `cellRect(row, col, artworkSize)` which slices the artwork into cells, `coordLabel(row, col)` for human-readable coordinates, and `allCells()` for iteration. Declarations in the header, implementation in `GridConfig.cpp`. At parse time: missing labels are generated, label counts are validated, and `artworkPath` is resolved against the config directory (explicit `artwork_path`, else a search for `artwork.*`).
 
-**`WebHandler` ([src/WebHandler.cpp](src/WebHandler.cpp))** — owns artwork `cv::Mat`, `GridConfig`, and all matcher instances; prepares them in parallel at construction. `locate(piece, selectedNames)` runs the selected matchers (case-insensitive by `name()`) in parallel. `registerRoutes(svr)` is still a stub — routes are to be designed with the user.
+**`WebHandler` ([src/WebHandler.cpp](src/WebHandler.cpp))** — owns artwork `cv::Mat`, `GridConfig`, and all matcher instances; prepares them in parallel at construction. `locate(piece, selectedNames)` runs the selected matchers (case-insensitive by `name()`) in parallel. `registerRoutes(svr)` adds the provisional JSON API: `GET /api/info` (grid + matchers with availability), `GET /api/artwork` (downscaled overview JPEG, encoded once at startup), `POST /api/locate` (multipart: `piece` = PNG cut-out, one `matcher` field per selected matcher → `{results:[…]}`; 400 with `{error}` on bad input). `main.cpp` mounts `web/` at `/`.
 
-**Not yet present:** HTTP routes and the UI — a simple, good-looking web page served by the binary.
+**Web page ([web/](web/))** — static, no build step, no libraries. [cutout.js](web/cutout.js) finds the piece with no DOM dependency (background modelled as a per-channel plane fitted to a border frame → colour distance with luminance at half weight → Otsu × user sensitivity → close/open → largest blob clear of the border → fill holes), at 800 px. [app.js](web/app.js) shows the outline preview with a looser/tighter slider, uploads a ≤1024 px PNG crop with alpha = outline, and renders the results table plus an artwork overview with each matcher's cell outlined in its colour. Matcher selection persists in `localStorage`. Photos come from `<input capture>`, so plain HTTP on the LAN works (no `getUserMedia`/HTTPS needed).
 
 ## Matcher implementations
 

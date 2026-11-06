@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f1115">
+    <title>Argus · OracleOfEdges</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 16C7 8 25 8 30 16C25 24 7 24 2 16Z' fill='%23ffd60a'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%230f1115'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="app.js"></script>
+</head>
+<body>
+    <header>
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M2 16C7 8 25 8 30 16C25 24 7 24 2 16Z"/>
+            <circle cx="16" cy="16" r="5"/>
+        </svg>
+        <div>
+            <h1>Argus</h1>
+            <p>Where does this piece go?</p>
+        </div>
+    </header>
+
+    <main>
+        <section class="card" id="capture">
+            <h2><span class="step">1</span> Photograph a piece</h2>
+            <p class="hint">Lay it face up on a plain surface that contrasts with it, centred, with space all around.</p>
+            <div class="actions">
+                <label class="button primary">
+                    <input id="camera" type="file" accept="image/*" capture="environment" hidden>
+                    Take photo
+                </label>
+                <label class="button">
+                    <input id="gallery" type="file" accept="image/*" hidden>
+                    Choose file
+                </label>
+            </div>
+        </section>
+
+        <section class="card" id="preview" hidden>
+            <h2><span class="step">2</span> Check the outline</h2>
+            <canvas id="preview-canvas"></canvas>
+            <p id="outline-status" class="status"></p>
+            <label class="slider">
+                <span>Looser</span>
+                <input id="sensitivity" type="range" min="0.5" max="1.6" step="0.05" value="1"
+                       aria-label="Outline sensitivity">
+                <span>Tighter</span>
+            </label>
+
+            <h3>Methods</h3>
+            <div id="matchers" class="chips"></div>
+
+            <div class="actions">
+                <button id="retake" class="button" type="button">Retake</button>
+                <button id="locate" class="button primary" type="button" disabled>Locate piece</button>
+            </div>
+        </section>
+
+        <section class="card" id="results" hidden>
+            <h2><span class="step">3</span> Results</h2>
+            <div class="result-head">
+                <img id="piece-thumb" alt="Uploaded piece">
+                <table>
+                    <thead><tr><th>Method</th><th>Cell</th><th>Confidence</th><th class="num">Time</th></tr></thead>
+                    <tbody id="result-rows"></tbody>
+                </table>
+            </div>
+            <div class="overview">
+                <div id="overview-cols" class="labels cols"></div>
+                <div id="overview-rows" class="labels rows"></div>
+                <div class="frame">
+                    <img id="overview-img" alt="Puzzle artwork">
+                    <svg id="overview-marks" preserveAspectRatio="none"></svg>
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

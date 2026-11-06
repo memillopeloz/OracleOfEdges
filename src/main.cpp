@@ -16,6 +16,7 @@ namespace {
 
 // ── Defaults (override via CLI options) ──────────────────────────────────────
 const std::string DEFAULT_CONFIG_DIR = "config";
+const std::string DEFAULT_WEB_DIR    = "web";
 const std::string GRID_FILE          = "grid.json";
 const std::string MODEL_FILE         = "mobilenetv2.onnx";
 constexpr int     DEFAULT_PORT       = 8080;
@@ -30,6 +31,7 @@ enum Status : int {
 
 struct Options {
     std::string configDir = DEFAULT_CONFIG_DIR;
+    std::string webDir    = DEFAULT_WEB_DIR;
     int         port      = DEFAULT_PORT;
     bool        showHelp  = false;
 };
@@ -39,6 +41,7 @@ void printUsage(const char* prog, std::ostream& out) {
     out << "Usage: " << prog << " [options]\n"
         << "\nOptions:\n"
         << "  --config-dir <dir>   Directory containing grid.json, artwork, model (default: config/)\n"
+        << "  --web-dir <dir>      Directory with the web page (default: web/)\n"
         << "  --port <port>        HTTP listen port (default: " << DEFAULT_PORT << ")\n"
         << "  --help, -h           Show this message\n"
         << "\nConfig directory should contain:\n"
@@ -73,6 +76,7 @@ int parseArgs(int argc, char* argv[], Options& opts) {
 
         if (arg == "--help" || arg == "-h")           opts.showHelp  = true;
         else if (arg == "--config-dir" && hasValue)   opts.configDir = argv[++i];
+        else if (arg == "--web-dir"    && hasValue)   opts.webDir    = argv[++i];
         else if (arg == "--port"       && hasValue)   status = parsePort(argv[++i], opts.port);
         else {
             std::cerr << "[error] Unknown or incomplete argument: " << arg << "\n";
@@ -139,27 +143,33 @@ void printBanner(int port) {
 
 // Blocks until the server stops
 int runServer(const cv::Mat& artwork, const GridConfig& grid,
-              const std::string& modelPath, int port) {
+              const std::string& modelPath, const std::string& webDir, int port) {
     int status = STATUS_OK;
-
-    std::cout << "[startup] Initializing matchers (this may take a moment)...\n";
-    WebHandler handler(artwork, grid, modelPath);
-
     httplib::Server svr;
-    handler.registerRoutes(svr);
 
-    // Log every request before routing
-    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response&) {
-        std::cout << "[http] " << req.method << " " << req.path << "\n";
-        return httplib::Server::HandlerResponse::Unhandled;
-    });
+    // Static page at /; the JSON API lives under /api (WebHandler). Checked
+    // before the slow matcher setup so a bad path fails fast.
+    if (!svr.set_mount_point("/", webDir)) {
+        std::cerr << "[error] Web directory not found: " << webDir << "\n";
+        status = STATUS_CONFIG_ERROR;
+    } else {
+        std::cout << "[startup] Initializing matchers (this may take a moment)...\n";
+        WebHandler handler(artwork, grid, modelPath);
+        handler.registerRoutes(svr);
 
-    printBanner(port);
+        // Log every request before routing
+        svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response&) {
+            std::cout << "[http] " << req.method << " " << req.path << "\n";
+            return httplib::Server::HandlerResponse::Unhandled;
+        });
 
-    // 0.0.0.0 so phones on the local network can reach the server
-    if (!svr.listen("0.0.0.0", port)) {
-        std::cerr << "[error] Failed to bind to port " << port << "\n";
-        status = STATUS_SERVER_ERROR;
+        printBanner(port);
+
+        // 0.0.0.0 so phones on the local network can reach the server
+        if (!svr.listen("0.0.0.0", port)) {
+            std::cerr << "[error] Failed to bind to port " << port << "\n";
+            status = STATUS_SERVER_ERROR;
+        }
     }
     return status;
 }
@@ -183,7 +193,7 @@ int main(int argc, char* argv[]) {
         if (status == STATUS_OK)
             status = loadArtwork(opts.configDir, grid, artwork);
         if (status == STATUS_OK)
-            status = runServer(artwork, grid, findModel(opts.configDir), opts.port);
+            status = runServer(artwork, grid, findModel(opts.configDir), opts.webDir, opts.port);
     }
 
     return status;

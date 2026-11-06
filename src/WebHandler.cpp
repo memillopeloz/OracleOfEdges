@@ -2,7 +2,11 @@
 #include <algorithm>
 #include <cctype>
 #include <future>
+#include <string>
 #include <utility>
+#include <vector>
+#include <nlohmann/json.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include "matchers/HistogramMatcher.hpp"
 #include "matchers/KeypointMatcher.hpp"
 #include "matchers/MLMatcher.hpp"
@@ -10,6 +14,14 @@
 #include "matchers/TemplateMatcher.hpp"
 
 namespace {
+
+// Longest side of the artwork overview shown on the page
+constexpr int OVERVIEW_MAX_DIM = 1600;
+
+void sendError(httplib::Response& res, int httpStatus, const std::string& message) {
+    res.status = httpStatus;
+    res.set_content(nlohmann::json{{"error", message}}.dump(), "application/json");
+}
 
 std::string lowercase(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -32,11 +44,61 @@ WebHandler::WebHandler(cv::Mat artwork, GridConfig grid, std::string modelPath)
                                      [&m, this] { m->prepare(artwork_, grid_); }));
     for (auto& p : pending)
         p.get();
+
+    cv::imencode(".jpg", matcher_utils::limitSize(artwork_, OVERVIEW_MAX_DIM), overviewJpeg_,
+                 {cv::IMWRITE_JPEG_QUALITY, 85});
 }
 
+// Provisional routes, to be settled with the user:
+//   GET  /api/info     grid layout and matchers (name, available)
+//   GET  /api/artwork  downscaled artwork JPEG for the overview
+//   POST /api/locate   multipart: "piece" = PNG cut-out (alpha = outline),
+//                      "matcher" = one field per selected matcher
 void WebHandler::registerRoutes(httplib::Server& svr) {
-    // Routes are still to be designed
-    (void)svr;
+    svr.Get("/api/info", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json matchers = nlohmann::json::array();
+        for (const auto& m : matchers_)
+            matchers.push_back({{"name", m->name()}, {"available", m->available()}});
+        const nlohmann::json info = {
+            {"rows", grid_.rows},           {"cols", grid_.cols},
+            {"rowLabels", grid_.rowLabels}, {"colLabels", grid_.colLabels},
+            {"matchers", matchers},
+        };
+        res.set_content(info.dump(), "application/json");
+    });
+
+    svr.Get("/api/artwork", [this](const httplib::Request&, httplib::Response& res) {
+        res.set_content(reinterpret_cast<const char*>(overviewJpeg_.data()),
+                        overviewJpeg_.size(), "image/jpeg");
+    });
+
+    svr.Post("/api/locate", [this](const httplib::Request& req, httplib::Response& res) {
+        std::vector<std::string> selected;
+        for (const auto& field : req.get_file_values("matcher"))
+            selected.push_back(field.content);
+
+        const std::string& data = req.get_file_value("piece").content;
+        cv::Mat image;
+        if (!data.empty())
+            image = cv::imdecode(std::vector<uchar>(data.begin(), data.end()),
+                                 cv::IMREAD_UNCHANGED);
+
+        if (image.empty()) {
+            sendError(res, 400, "Missing or unreadable piece image");
+        } else if (selected.empty()) {
+            sendError(res, 400, "No matcher selected");
+        } else {
+            nlohmann::json results = nlohmann::json::array();
+            for (const MatchResult& r : locate(image, selected))
+                results.push_back({
+                    {"matcher", r.matcherName}, {"coord", r.coord},
+                    {"row", r.row},             {"col", r.col},
+                    {"confidence", r.confidence}, {"timeMs", r.timeMs},
+                    {"error", r.error},
+                });
+            res.set_content(nlohmann::json{{"results", results}}.dump(), "application/json");
+        }
+    });
 }
 
 std::vector<std::string> WebHandler::matcherNames() const {

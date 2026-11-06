@@ -47,7 +47,7 @@ the repo's `config/`, not the copies.
 cd build
 ./argus
 # or with custom options:
-./argus --port 8080 --config-dir ../config
+./argus --port 8080 --config-dir ../config --web-dir ../web
 ```
 
 The server binds to `0.0.0.0:8080` — accessible from any device on the same network.
@@ -60,6 +60,16 @@ ifconfig | grep 'inet '       # macOS
 ```
 
 Then open `http://<laptop-ip>:8080` on your smartphone.
+
+### Using the page
+
+1. Lay the piece face up on a plain surface that contrasts with it, with space
+   all around, and tap **Take photo**.
+2. Check the yellow outline. If it misses part of the piece or takes in the
+   table, move the **Looser / Tighter** slider.
+3. Pick the methods to run and tap **Locate piece**. The table shows each
+   method's cell, confidence and time, and the artwork overview outlines each
+   method's cell in its colour.
 
 ## Benchmark
 
@@ -127,6 +137,10 @@ OracleOfEdges/
 │       ├── HistogramMatcher.hpp/.cpp
 │       ├── KeypointMatcher.hpp/.cpp
 │       └── OnnxGraph.hpp/.cpp
+├── web/                   ← the page served at /
+│   ├── index.html, style.css
+│   ├── app.js             ← UI, upload, results
+│   └── cutout.js          ← piece outline detection
 ├── tools/
 │   └── bench.cpp          ← argus_bench
 └── CMakeLists.txt

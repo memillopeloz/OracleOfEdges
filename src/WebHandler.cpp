@@ -7,6 +7,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include "matchers/CombinedMatcher.hpp"
 #include "matchers/HistogramMatcher.hpp"
 #include "matchers/KeypointMatcher.hpp"
 #include "matchers/MLMatcher.hpp"
@@ -43,10 +44,14 @@ std::string lowercase(std::string s) {
 
 WebHandler::WebHandler(cv::Mat artwork, GridConfig grid, std::string modelPath)
     : artwork_(std::move(artwork)), grid_(std::move(grid)) {
-    matchers_.push_back(std::make_unique<TemplateMatcher>());
+    auto tmpl     = std::make_unique<TemplateMatcher>();
+    auto keypoint = std::make_unique<KeypointMatcher>();
+    auto combined = std::make_unique<CombinedMatcher>(*keypoint, *tmpl);
+    matchers_.push_back(std::move(tmpl));
     matchers_.push_back(std::make_unique<MLMatcher>(modelPath));
     matchers_.push_back(std::make_unique<HistogramMatcher>());
-    matchers_.push_back(std::make_unique<KeypointMatcher>());
+    matchers_.push_back(std::move(keypoint));
+    matchers_.push_back(std::move(combined)); // prepare() only keeps the grid
 
     std::vector<std::future<void>> pending;
     for (auto& m : matchers_)

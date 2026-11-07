@@ -1,7 +1,7 @@
 # OracleOfEdges
 
 A C++17 server, **Argus** (named for the hundred-eyed giant who sees everything), that accepts a photo of a puzzle piece (from a smartphone browser) 
-and locates it within a reference artwork image using four different matching methods.
+and locates it within a reference artwork image using four different matching methods, plus a combination of the two best.
 
 ## Requirements
 
@@ -123,8 +123,9 @@ cd build && ./argus_bench config --real ../samples/cut
 | 2 | ML (MobileNetV2) | ONNX embedding + cosine  | Semantic understanding, lighting-robust |
 | 3 | Histogram Match  | Grey-level + texture histograms | Rotation-invariant, very fast   |
 | 4 | Keypoint (ORB)   | ORB + BF matcher + ratio | Robust to rotation and scale changes   |
+| 5 | Combined         | Keypoint, else Template  | Best overall on this puzzle            |
 
-All four methods are always built. The user chooses which methods to run for each
+All five methods are always built. The user chooses which methods to run for each
 photo (one or several), and the results are shown as a table with coordinate,
 confidence, and timing per selected method.
 
@@ -150,6 +151,7 @@ OracleOfEdges/
 │       ├── MLMatcher.hpp/.cpp
 │       ├── HistogramMatcher.hpp/.cpp
 │       ├── KeypointMatcher.hpp/.cpp
+│       ├── CombinedMatcher.hpp/.cpp
 │       └── OnnxGraph.hpp/.cpp
 ├── web/                   ← the page served at /
 │   ├── index.html, style.css
@@ -249,7 +251,23 @@ win.
   it is wrong it usually says so with a confidence near zero.
 - **Struggles with:** soft or plain pieces that have few sharp details; then it
   may find nothing and report no result.
-- **Speed:** a second or two per piece.
+- **Speed:** a few seconds per piece.
+
+### Combined
+
+**The idea:** ask Keypoint first, and fall back to Template when Keypoint isn't
+sure.
+
+Keypoint is right less often than it would like, but it knows when it is: a
+clearly non-zero confidence is usually a hit. Template always gives an answer
+but can't tell a good one from a bad one. They tend to get *different* pieces
+right, so taking Keypoint's answer when it is confident and Template's
+otherwise gets more pieces right than either alone.
+
+- **Good at:** the best hit rate overall on this puzzle.
+- **Confidence:** Keypoint's when it answered; a fallback to Template always
+  shows a low confidence (under 5%), since Template's guess is less certain.
+- **Speed:** runs both side by side, so as slow as the slower of the two.
 
 ### Reading the results
 
@@ -258,5 +276,6 @@ win.
   method measures it differently, so compare confidence within a method, not
   across methods. A 30% from Keypoint can mean more than a 95% from Histogram.
 - **When methods agree**, the answer is much more likely to be right. When they
-  disagree, trust Keypoint first if its confidence is clearly above zero.
+  disagree, trust Keypoint first if its confidence is clearly above zero —
+  which is exactly what Combined does for you.
 

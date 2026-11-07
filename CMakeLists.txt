@@ -57,6 +57,7 @@ add_library(argus_core STATIC
     src/matchers/TemplateMatcher.cpp
     src/matchers/HistogramMatcher.cpp
     src/matchers/KeypointMatcher.cpp
+    src/matchers/CombinedMatcher.cpp
     src/matchers/MLMatcher.cpp
     src/matchers/OnnxGraph.cpp
 )

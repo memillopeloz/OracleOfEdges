@@ -185,6 +185,30 @@ td small { color: var(--muted); font-variant-numeric: tabular-nums; }
 .frame .grid { stroke: rgba(255, 255, 255, 0.55); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .frame .mark { stroke-width: 3; vector-effect: non-scaling-stroke; fill-opacity: 0.18; }
 
+/* Admin page: cell picker */
+.cell-grid { display: grid; grid-template-columns: repeat(var(--cols, 8), 1fr); gap: 4px; }
+.cell {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.1;
+    cursor: pointer;
+}
+.cell small { color: var(--ok); font-size: 0.7rem; min-height: 0.8rem; }
+.cell.empty { border-style: dashed; color: var(--muted); }
+.cell.selected { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cell.selected small { color: var(--accent-ink); }
+#preview { margin-top: 16px; }
+code { font-size: 0.9em; }
+
 @media (max-width: 520px) {
     .card { padding: 16px; }
     .result-head { flex-direction: column; }

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0f1115">
+    <title>Argus Samples</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 16C7 8 25 8 30 16C25 24 7 24 2 16Z' fill='%23ffd60a'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%230f1115'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
+    <script type="module" src="admin.js"></script>
+</head>
+<body>
+    <header>
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M2 16C7 8 25 8 30 16C25 24 7 24 2 16Z"/>
+            <circle cx="16" cy="16" r="5"/>
+        </svg>
+        <div>
+            <h1>Argus samples</h1>
+            <p>Temporary admin: collect test photos by cell</p>
+        </div>
+    </header>
+
+    <main>
+        <p id="off" class="card status" data-level="bad" hidden>
+            The admin page is off. Start the server with <code>--samples-dir ../samples</code>.
+        </p>
+
+        <section class="card" id="pick">
+            <h2><span class="step">1</span> Pick the piece's cell</h2>
+            <p class="hint">Numbers show how many photos each cell already has.</p>
+            <div id="cells" class="cell-grid"></div>
+            <div id="existing" hidden>
+                <h3>Save as</h3>
+                <div id="targets" class="chips"></div>
+            </div>
+        </section>
+
+        <section class="card" id="shoot">
+            <h2><span class="step">2</span> Photograph it</h2>
+            <div class="actions">
+                <label class="button primary">
+                    <input id="camera" type="file" accept="image/*" capture="environment" hidden>
+                    Take photo
+                </label>
+                <label class="button">
+                    <input id="gallery" type="file" accept="image/*" hidden>
+                    Choose file
+                </label>
+            </div>
+            <div id="preview" hidden>
+                <canvas id="preview-canvas"></canvas>
+                <p id="outline-status" class="status"></p>
+                <div class="actions">
+                    <button id="save" class="button primary" type="button" disabled>Save sample</button>
+                </div>
+            </div>
+            <p id="saved" class="status" data-level="ok" hidden></p>
+        </section>
+    </main>
+</body>
+</html>

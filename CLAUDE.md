@@ -24,6 +24,7 @@ The binary must be run from the `build/` directory (CMake copies `config/` and `
 cd build
 ./argus
 ./argus --port 8080 --config-dir ../config --web-dir ../web
+./argus --samples-dir ../samples        # also enable the temporary admin page /admin.html
 ```
 
 Required before first run: place `artwork.jpg` (or `.png`/`.bmp`) in `config/`.
@@ -41,6 +42,8 @@ The server flow is: HTTP upload (piece photo + the set of matchers the user sele
 **`GridConfig` ([src/GridConfig.hpp](src/GridConfig.hpp))** — parses `grid.json`; key methods are `cellRect(row, col, artworkSize)` which slices the artwork into cells, `coordLabel(row, col)` for human-readable coordinates, and `allCells()` for iteration. Declarations in the header, implementation in `GridConfig.cpp`. At parse time: missing labels are generated, label counts are validated, and `artworkPath` is resolved against the config directory (explicit `artwork_path`, else a search for `artwork.*`).
 
 **`WebHandler` ([src/WebHandler.cpp](src/WebHandler.cpp))** — owns artwork `cv::Mat`, `GridConfig`, and all matcher instances; prepares them in parallel at construction. `locate(piece, selectedNames)` runs the selected matchers (case-insensitive by `name()`) in parallel. `registerRoutes(svr)` adds the JSON API: `GET /api/info` (grid + matchers with availability), `GET /api/artwork` (downscaled overview JPEG, encoded once at startup), `POST /api/locate` (multipart: `piece` = PNG cut-out, one `matcher` field per selected matcher → `{results:[…]}`; 400 with `{error}` on bad input). `main.cpp` mounts `web/` at `/`.
+
+**Admin page (temporary, [AdminRoutes.cpp](src/AdminRoutes.cpp) + [web/admin.html](web/admin.html))** — only with `--samples-dir <dir>`. Lets the user photograph sample pieces from the phone and save the original photo under its cell name (`C5.jpg`, next free `C5_2.jpg`, …) or replace an existing one; shows the same outline preview as the main page. Cell labels are validated against the grid and only listed files can be replaced. Delete both files plus the option in `main.cpp` when sample collection is over.
 
 **Web page ([web/](web/))** — static, no build step, no libraries. [cutout.js](web/cutout.js) finds the piece with no DOM dependency, at 800 px, tuned on real photos of sepia pieces on brown cardboard/wood: robust background model from a border frame (per-channel plane + residual covariance, refit on the best 80%) → smoothed Mahalanobis distance → Otsu × user sensitivity → seed blob clear of the border → hysteresis growth through a weaker threshold (thin strands opened away; growth running along or reaching past the seed to the photo edge is a leak) → close/open → main blob → fill holes. [photo.js](web/photo.js) is the canvas side (decode with EXIF orientation, working copy, outline preview, ≤1024 px PNG cut-out with alpha = outline), shared by the page and `tools/cutsamples.mjs`. [app.js](web/app.js) is the UI: outline preview with a looser/tighter slider, results table plus an artwork overview with each matcher's cell outlined in its colour. Matcher selection persists in `localStorage`. Photos come from `<input capture>`, so plain HTTP on the LAN works (no `getUserMedia`/HTTPS needed).
 

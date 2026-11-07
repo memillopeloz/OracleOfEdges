@@ -1,4 +1,5 @@
 // OracleOfEdges — Argus: locates a photographed puzzle piece within its artwork.
+#include "AdminRoutes.hpp"
 #include "GridConfig.hpp"
 #include "WebHandler.hpp"
 #include <httplib.h>
@@ -32,6 +33,7 @@ enum Status : int {
 struct Options {
     std::string configDir = DEFAULT_CONFIG_DIR;
     std::string webDir    = DEFAULT_WEB_DIR;
+    std::string samplesDir;   // empty = admin page off
     int         port      = DEFAULT_PORT;
     bool        showHelp  = false;
 };
@@ -42,6 +44,7 @@ void printUsage(const char* prog, std::ostream& out) {
         << "\nOptions:\n"
         << "  --config-dir <dir>   Directory containing grid.json, artwork, model (default: config/)\n"
         << "  --web-dir <dir>      Directory with the web page (default: web/)\n"
+        << "  --samples-dir <dir>  Enable the temporary admin page (/admin.html) saving sample photos here\n"
         << "  --port <port>        HTTP listen port (default: " << DEFAULT_PORT << ")\n"
         << "  --help, -h           Show this message\n"
         << "\nConfig directory should contain:\n"
@@ -77,6 +80,7 @@ int parseArgs(int argc, char* argv[], Options& opts) {
         if (arg == "--help" || arg == "-h")           opts.showHelp  = true;
         else if (arg == "--config-dir" && hasValue)   opts.configDir = argv[++i];
         else if (arg == "--web-dir"    && hasValue)   opts.webDir    = argv[++i];
+        else if (arg == "--samples-dir" && hasValue)  opts.samplesDir = argv[++i];
         else if (arg == "--port"       && hasValue)   status = parsePort(argv[++i], opts.port);
         else {
             std::cerr << "[error] Unknown or incomplete argument: " << arg << "\n";
@@ -142,8 +146,8 @@ void printBanner(int port) {
 }
 
 // Blocks until the server stops
-int runServer(const cv::Mat& artwork, const GridConfig& grid,
-              const std::string& modelPath, const std::string& webDir, int port) {
+int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string& modelPath,
+              const std::string& webDir, const std::string& samplesDir, int port) {
     int status = STATUS_OK;
     httplib::Server svr;
 
@@ -156,6 +160,10 @@ int runServer(const cv::Mat& artwork, const GridConfig& grid,
         std::cout << "[startup] Initializing matchers (this may take a moment)...\n";
         WebHandler handler(artwork, grid, modelPath);
         handler.registerRoutes(svr);
+        if (!samplesDir.empty()) {
+            registerAdminRoutes(svr, grid, samplesDir);
+            std::cout << "[startup] Admin page on: /admin.html saves samples to " << samplesDir << "\n";
+        }
 
         // Log every request before routing
         svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response&) {
@@ -193,7 +201,8 @@ int main(int argc, char* argv[]) {
         if (status == STATUS_OK)
             status = loadArtwork(opts.configDir, grid, artwork);
         if (status == STATUS_OK)
-            status = runServer(artwork, grid, findModel(opts.configDir), opts.webDir, opts.port);
+            status = runServer(artwork, grid, findModel(opts.configDir), opts.webDir,
+                               opts.samplesDir, opts.port);
     }
 
     return status;

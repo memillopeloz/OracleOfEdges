@@ -82,7 +82,10 @@ cd build
 ```
 
 To score real photos, put them in `samples/` named by their true cell
-(`C5.jpg`, `C5_2.jpg`, …), cut them out with the page's own code, then score:
+(`C5.jpg`, `C5_2.jpg`, …), cut them out with the page's own code, then score.
+To add or replace sample photos straight from the phone, start the server with
+`--samples-dir ../samples` and open `http://<laptop-ip>:8080/admin.html`
+(a temporary admin page: pick the cell, take the photo, save).
 
 ```bash
 node tools/cutsamples.mjs                     # samples/ → samples/cut/

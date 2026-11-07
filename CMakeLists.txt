@@ -50,6 +50,7 @@ message(STATUS "ONNX Runtime: ${ONNXRUNTIME_DIR}")
 # ── Targets ───────────────────────────────────────────────────────────────────
 # Everything but main() lives in argus_core, shared by the server and the bench.
 add_library(argus_core STATIC
+    src/AdminRoutes.cpp
     src/GridConfig.cpp
     src/WebHandler.cpp
     src/matchers/MatcherUtils.cpp

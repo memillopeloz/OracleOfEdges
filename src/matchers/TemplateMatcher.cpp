@@ -90,10 +90,13 @@ MatchResult TemplateMatcher::match(const Piece& piece) const {
     cv::Mat gray;
     cv::cvtColor(piece.bgr, gray, cv::COLOR_BGR2GRAY);
     const int radius = static_cast<int>(std::lround(EXTRA_ERODE_FRAC * std::sqrt(piece.area)));
-    cv::Mat   mask   = piece.mask;
+    // A fresh buffer: piece.mask is shared with matchers running concurrently
+    cv::Mat mask;
     if (radius > 0)
         cv::erode(piece.mask, mask,
                   cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(2 * radius + 1, 2 * radius + 1)));
+    else
+        mask = piece.mask;
     gray.setTo(cv::mean(gray, mask), ~mask);
     std::vector<cv::Mat> orientations = {gray};
     for (int flag : {cv::ROTATE_90_CLOCKWISE, cv::ROTATE_180, cv::ROTATE_90_COUNTERCLOCKWISE}) {

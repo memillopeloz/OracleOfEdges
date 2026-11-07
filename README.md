@@ -121,7 +121,7 @@ cd build && ./argus_bench config --real ../samples/cut
 |---|------------------|--------------------------|----------------------------------------|
 | 1 | Template Match   | cv::matchTemplate        | Simple, fast, good with consistent lighting |
 | 2 | ML (MobileNetV2) | ONNX embedding + cosine  | Semantic understanding, lighting-robust |
-| 3 | Histogram Match  | HSV histogram + CORREL   | Rotation-invariant, very fast          |
+| 3 | Histogram Match  | Grey-level + texture histograms | Rotation-invariant, very fast   |
 | 4 | Keypoint (ORB)   | ORB + BF matcher + ratio | Robust to rotation and scale changes   |
 
 All four methods are always built. The user chooses which methods to run for each
@@ -213,19 +213,24 @@ region.
 
 ### Histogram
 
-**The idea:** compare *which colours* appear and how much of each, ignoring
-where they are.
+**The idea:** compare the *character* of the piece's surface (how its light
+and dark are spread, how busy or smooth it is), ignoring where things are.
 
-Imagine sorting all the piece's pixels into colour buckets (so much reddish,
-so much bluish…) and doing the same for every piece-sized region of the
-picture. The region whose buckets fill up most like the piece's is the answer.
-Because position is ignored, rotation doesn't matter at all.
+Colour is left out on purpose: this puzzle is printed in near-monochrome sepia,
+so blue sky and green leaves both come out brown. Instead Argus tallies three
+things for the piece and for every piece-sized region of the picture: how the
+brightness is spread (mostly mid-tones? a few bright highlights?), what the
+tiny local patterns look like (flat, edges, corners, specks), and how much
+detail there is compared with the overall contrast. All three ignore rotation
+and survive the print being lighter, darker or flatter than the screen. The
+region whose tallies look most like the piece's is the answer.
 
-- **Good at:** pieces with distinctive colours, and it's very fast.
-- **Struggles with:** anything that changes colour between the screen and the
-  table, such as warm room lighting or a puzzle printed in muted or sepia
-  tones. Then it can be confidently wrong.
-- **Speed:** the fastest, a few hundredths of a second.
+- **Good at:** being very fast, and telling smooth areas (sky, walls) from busy
+  ones (foliage, crowds).
+- **Struggles with:** almost everything else. Many regions of the picture have
+  the same character, so it is rarely right on its own. Its confidence says
+  how far ahead the winner is of the best region in any other cell.
+- **Speed:** the fastest, a few thousandths of a second.
 
 ### Keypoint
 

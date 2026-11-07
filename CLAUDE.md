@@ -18,18 +18,19 @@ Targets: `argus_core` (static lib: everything but `main.cpp`), `argus` (server),
 
 ## Run
 
-The binary must be run from the `build/` directory (CMake copies `config/` and `web/` there post-build):
+`argus` and `argus_bench` default to the repo's own `config/` and `web/` (absolute paths compiled in via `ARGUS_SOURCE_DIR`), so they run from any directory; the options are only for other locations. Nothing is copied into `build/` (a post-build copy used to go stale).
 
 ```bash
-cd build
-./argus
-./argus --port 8080 --config-dir ../config --web-dir ../web
-./argus --samples-dir ../samples        # also enable the temporary admin page /admin.html
+build/argus
+build/argus --port 8080 --config-dir /path/to/config --web-dir /path/to/web
+build/argus --samples-dir samples       # also enable the temporary admin page /admin.html
 ```
+
+The user's `~/.local/bin/argus` is a symlink to `build/argus`.
 
 Required before first run: place `artwork.jpg` (or `.png`/`.bmp`) in `config/`.
 
-VS Code: the default build task configures and builds with CMake; IntelliSense reads `build/compile_commands.json`. `config/` in the repo root is the source of truth; it gets copied into `build/config/` on each build, so edit the repo copy.
+VS Code: the default build task configures and builds with CMake; IntelliSense reads `build/compile_commands.json`. `config/` in the repo root is the only copy.
 
 ## Architecture
 
@@ -58,9 +59,9 @@ Each matcher lives in `src/matchers/` (`.hpp` + `.cpp`) and inherits from `Match
 - **KeypointMatcher** — ORB, ~150 artwork features per piece (cap 800k) spread per cell; the piece is shrunk to ~2× its artwork footprint, then ORB with an 8-level ×1.3 pyramid and FAST threshold 8 (the soft print has weak corners; 12 levels, no shrink, when the piece count is unknown). Brute-force Hamming, 8 neighbours, in chunks of 200k (BFMatcher's per-set limit is 2^18); the ratio test compares against the nearest neighbour at least a piece away (closer ones are the same spot, not rivals) + RANSAC homography of the piece centre, falling back to per-cell voting. Best-calibrated confidence (≈0 when wrong).
 - **CombinedMatcher** — wraps the Template and Keypoint instances `WebHandler` already prepared (its own `prepare` only keeps the grid), runs both in parallel, returns Keypoint's cell when its confidence ≥ 0.05 (any value in 0.02–0.10 scored the same on real samples), else Template's with confidence × 0.05. Their hits overlap only partly (either right on 53% of real photos). Matchers run concurrently on one shared `Piece`: never write into its buffers (Template's erosion once did, making the bench non-repeatable).
 
-**Benchmark:** `tools/bench.cpp` → `argus_bench [config-dir] [samples] [pieces...]` (run from `build/`). Simulates client cut-outs from the artwork the way a phone photo of this sepia print looks (irregular rectangular jigsaw mask, near-monochrome warm print whose channel weights and ink density vary per piece, blur, light grain, uneven light, table/shadow rim inside the outline, rotation, slight tilt, JPEG) and reports per-matcher accuracy, time, and mean confidence on hits vs. misses. Its constants were tuned so the accuracies track `--real`; fixed seed, so runs are comparable — re-run it after any matcher change, and confirm with `--real`. Baseline (80 samples, 10587×6800 artwork, 5040 pieces, 2026-11-07): Combined 38%, Keypoint 36%, Template 30%, Histogram 8%, ML 0%; startup ~30 s. Real (62 photos, round-brush cut-outs, same day): Combined 51%, Template 41%, Keypoint 38%, ML 4%, Histogram 4%. Template and Keypoint take ~3–4.5 s per piece with all matchers running, Combined slightly more. Keypoint's confident misses on real photos are the neighbouring cell (pieces on a cell boundary).
+**Benchmark:** `tools/bench.cpp` → `argus_bench [config-dir] [samples] [pieces...]` (config-dir is optional: omitted when the first argument is a number or `--real`). Simulates client cut-outs from the artwork the way a phone photo of this sepia print looks (irregular rectangular jigsaw mask, near-monochrome warm print whose channel weights and ink density vary per piece, blur, light grain, uneven light, table/shadow rim inside the outline, rotation, slight tilt, JPEG) and reports per-matcher accuracy, time, and mean confidence on hits vs. misses. Its constants were tuned so the accuracies track `--real`; fixed seed, so runs are comparable — re-run it after any matcher change, and confirm with `--real`. Baseline (80 samples, 10587×6800 artwork, 5040 pieces, 2026-11-07): Combined 38%, Keypoint 36%, Template 30%, Histogram 8%, ML 0%; startup ~30 s. Real (62 photos, round-brush cut-outs, same day): Combined 51%, Template 41%, Keypoint 38%, ML 4%, Histogram 4%. Template and Keypoint take ~3–4.5 s per piece with all matchers running, Combined slightly more. Keypoint's confident misses on real photos are the neighbouring cell (pieces on a cell boundary).
 
-**Real samples:** `samples/` (git-ignored) holds phone photos named by true cell (`C5.jpg`, `C5_2.jpg`). `node tools/cutsamples.mjs [samplesDir] [outDir] [sensitivity]` cuts them out with the page's own code in headless Brave (default output `samples/cut/`, plus `outline/` previews), then `argus_bench config --real ../samples/cut` scores them per photo. First real run (62 photos, 2026-11-05): Keypoint 30%, Template 16%, ML 4%, Histogram 1% — far below the simulated numbers of the time, which led to the realistic simulator.
+**Real samples:** `samples/` (git-ignored) holds phone photos named by true cell (`C5.jpg`, `C5_2.jpg`). `node tools/cutsamples.mjs [samplesDir] [outDir] [sensitivity]` cuts them out with the page's own code in headless Brave (default output `samples/cut/`, plus `outline/` previews), then `argus_bench --real samples/cut` scores them per photo. First real run (62 photos, 2026-11-05): Keypoint 30%, Template 16%, ML 4%, Histogram 1% — far below the simulated numbers of the time, which led to the realistic simulator.
 
 **Page test:** `node tools/webtest.mjs <url> <photo> <outPrefix> [sensitivity]` drives headless Brave through photo → outline → locate at phone size, saving screenshots and printing the results table and any JS errors. Needs a running server. Browser driving lives in [tools/cdp.mjs](tools/cdp.mjs) (DevTools over `--remote-debugging-pipe`, no npm packages; `ARGUS_BROWSER` overrides the binary — not `BROWSER`, which this desktop sets to a Firefox stub).
 

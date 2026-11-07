@@ -8,11 +8,12 @@
 // A result counts as correct when it names the cell holding the piece's centre.
 //
 // Usage: argus_bench [config-dir] [samples] [pieces...]
-//   config-dir  default: config
+//   config-dir  default: the repo's config/ (omit it when the next argument is a
+//               number or --real)
 //   samples     simulated pieces per run (default: 40)
 //   pieces      piece counts to test (default: the value in grid.json; 0 = unknown)
 //
-//        argus_bench <config-dir> --real <cut-dir>
+//        argus_bench [config-dir] --real <cut-dir>
 //   Scores real cut-outs (from tools/cutsamples.mjs) instead. Each file is named
 //   by its true cell, optionally with a suffix: C5.png, C5_2.png. Prints one
 //   line per photo and the same summary as the simulated run.
@@ -342,16 +343,21 @@ void runReal(const cv::Mat& art, const GridConfig& grid, const std::string& mode
 } // namespace
 
 // Entry point; see the usage in the file header
-// In:     argv — [config-dir] [samples [pieces...] | --real <cut-dir>]
+// In:     argv — [config-dir] [samples [pieces...] | --real <cut-dir>]; config-dir
+//                 is taken as given unless argv[1] is a number or --real
 // Out:    0 on success
 // Errors: 1 on any exception (bad number, unreadable grid.json, missing cut
 //         directory), 2 if the artwork can't be read; message on stderr
 int main(int argc, char* argv[]) {
     int status = 0;
     try {
-        const std::string configDir = argc > 1 ? argv[1] : "config";
-        const bool real = argc > 3 && std::string(argv[2]) == "--real";
-        const int samples = argc > 2 && !real ? std::stoi(argv[2]) : 40;
+        // The config directory is optional: a number or --real starts the rest
+        const bool hasDir = argc > 1 && std::string(argv[1]) != "--real"
+                         && std::string(argv[1]).find_first_not_of("0123456789") != std::string::npos;
+        const int first = hasDir ? 2 : 1;   // index of the first argument after config-dir
+        const std::string configDir = hasDir ? argv[1] : std::string(ARGUS_SOURCE_DIR) + "/config";
+        const bool real = argc > first + 1 && std::string(argv[first]) == "--real";
+        const int samples = argc > first && !real ? std::stoi(argv[first]) : 40;
 
         const GridConfig grid = GridConfig::fromFile((fs::path(configDir) / "grid.json").string());
         const cv::Mat art = cv::imread(grid.artworkPath, cv::IMREAD_COLOR);
@@ -359,7 +365,7 @@ int main(int argc, char* argv[]) {
         const std::string modelPath = fs::exists(model) ? model : "";
 
         std::vector<int> pieceCounts;
-        for (int i = 3; i < argc && !real; ++i)
+        for (int i = first + 1; i < argc && !real; ++i)
             pieceCounts.push_back(std::stoi(argv[i]));
         if (pieceCounts.empty())
             pieceCounts.push_back(grid.pieces);
@@ -368,7 +374,7 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "[error] Cannot read artwork: %s\n", grid.artworkPath.c_str());
             status = 2;
         } else if (real) {
-            runReal(art, grid, modelPath, argv[3]);
+            runReal(art, grid, modelPath, argv[first + 1]);
         } else {
             for (int pieces : pieceCounts) {
                 GridConfig variant = grid;

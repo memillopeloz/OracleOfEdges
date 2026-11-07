@@ -5,19 +5,28 @@
 #include <httplib.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <chrono>
 #include <exception>
 #include <filesystem>
+#include <ios>
 #include <iostream>
 #include <ostream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
 namespace {
 
 // ── Defaults (override via CLI options) ──────────────────────────────────────
-const std::string DEFAULT_CONFIG_DIR = "config";
-const std::string DEFAULT_WEB_DIR    = "web";
+// The repo's own folders (ARGUS_SOURCE_DIR is set by CMake), so argus runs from
+// any directory
+const std::string DEFAULT_CONFIG_DIR = std::string(ARGUS_SOURCE_DIR) + "/config";
+const std::string DEFAULT_WEB_DIR    = std::string(ARGUS_SOURCE_DIR) + "/web";
 const std::string GRID_FILE          = "grid.json";
 const std::string MODEL_FILE         = "mobilenetv2.onnx";
 constexpr int     DEFAULT_PORT       = 8080;
@@ -47,8 +56,10 @@ struct Options {
 void printUsage(const char* prog, std::ostream& out) {
     out << "Usage: " << prog << " [options]\n"
         << "\nOptions:\n"
-        << "  --config-dir <dir>   Directory containing grid.json, artwork, model (default: config/)\n"
-        << "  --web-dir <dir>      Directory with the web page (default: web/)\n"
+        << "  --config-dir <dir>   Directory containing grid.json, artwork, model\n"
+        << "                       (default: " << DEFAULT_CONFIG_DIR << ")\n"
+        << "  --web-dir <dir>      Directory with the web page\n"
+        << "                       (default: " << DEFAULT_WEB_DIR << ")\n"
         << "  --samples-dir <dir>  Enable the temporary admin page (/admin.html) saving sample photos here\n"
         << "  --port <port>        HTTP listen port (default: " << DEFAULT_PORT << ")\n"
         << "  --help, -h           Show this message\n"
@@ -166,40 +177,79 @@ std::string findModel(const std::string& configDir) {
     return modelPath;
 }
 
-// Prints the "server is up" banner with the addresses to open
-// In:     port — listen port
-// Out:    none
-// Errors: none
-void printBanner(int port) {
-    std::cout << "\n========================================\n"
-              << "  Argus is watching  (OracleOfEdges)\n"
-              << "  Local:   http://localhost:" << port << "\n"
-              << "  Network: http://<your-laptop-ip>:" << port << "\n"
-              << "  (Find IP with: ip addr | grep 'inet ')\n"
-              << "========================================\n\n";
+// IPv4 addresses of this machine's active network interfaces, loopback excluded
+// In:     none
+// Out:    dotted addresses, e.g. "192.168.1.20"; empty if none or on failure
+// Errors: none (a failed interface query yields an empty list)
+std::vector<std::string> lanAddresses() {
+    std::vector<std::string> addresses;
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) == 0) {
+        for (const ifaddrs* ifa = list; ifa != nullptr; ifa = ifa->ifa_next) {
+            if (ifa->ifa_addr != nullptr && ifa->ifa_addr->sa_family == AF_INET) {
+                const in_addr addr = reinterpret_cast<const sockaddr_in*>(ifa->ifa_addr)->sin_addr;
+                char text[INET_ADDRSTRLEN] = {};
+                if (ntohl(addr.s_addr) >> 24 != 127 && inet_ntop(AF_INET, &addr, text, sizeof text) != nullptr)
+                    addresses.emplace_back(text);
+            }
+        }
+        freeifaddrs(list);
+    }
+    return addresses;
 }
 
-// Mounts the web page, prepares the matchers, registers the API (and the admin
-// API if samplesDir is set), then serves on 0.0.0.0:port. Blocks until the
-// server stops.
+// Prints the "server is up" banner with the addresses to open
+// In:     port    — listen port
+//         seconds — time since the program started
+// Out:    none
+// Errors: none
+void printBanner(int port, long seconds) {
+    std::cout << "\n========================================\n"
+              << "  Argus is ready (" << seconds << " s)  —  OracleOfEdges\n"
+              << "  Local:   http://localhost:" << port << "\n";
+    const std::vector<std::string> addresses = lanAddresses();
+    for (const std::string& a : addresses)
+        std::cout << "  Network: http://" << a << ":" << port << "\n";
+    if (addresses.empty())
+        std::cout << "  Network: http://<your-laptop-ip>:" << port << "  (ip addr | grep 'inet ')\n";
+    std::cout << "========================================\n\n";
+}
+
+// Mounts the web page and binds the port (both checked before the slow matcher
+// setup, so mistakes fail fast), prepares the matchers, registers the API (and
+// the admin API if samplesDir is set), prints the ready banner, then serves on
+// 0.0.0.0:port. Requests arriving during setup wait in the socket's queue.
+// Blocks until the server stops.
 // In:     artwork, grid, modelPath — as loaded at startup
 //         webDir     — static page directory, mounted at /
 //         samplesDir — admin page sample directory; empty = admin page off
 //         port       — listen port
+//         started    — when the program started, for the banner
 // Out:    STATUS_OK after a normal stop, else an error status
-// Errors: STATUS_CONFIG_ERROR if webDir doesn't exist (checked before the slow
-//         matcher setup); STATUS_SERVER_ERROR if the port can't be bound.
-//         Exceptions from matcher preparation propagate.
+// Errors: STATUS_CONFIG_ERROR if webDir doesn't exist; STATUS_SERVER_ERROR if
+//         the port can't be bound (e.g. another argus is running) or serving
+//         fails. Exceptions from matcher preparation propagate.
 int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string& modelPath,
-              const std::string& webDir, const std::string& samplesDir, int port) {
+              const std::string& webDir, const std::string& samplesDir, int port,
+              std::chrono::steady_clock::time_point started) {
     int status = STATUS_OK;
     httplib::Server svr;
 
-    // Static page at /; the JSON API lives under /api (WebHandler). Checked
-    // before the slow matcher setup so a bad path fails fast.
+    // httplib's defaults add SO_REUSEPORT, which lets a second argus share the
+    // port silently; keep only SO_REUSEADDR (instant restart after a stop)
+    svr.set_socket_options([](socket_t sock) {
+        const int yes = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
+    });
+
+    // Static page at /; the JSON API lives under /api (WebHandler).
+    // 0.0.0.0 so phones on the local network can reach the server.
     if (!svr.set_mount_point("/", webDir)) {
         std::cerr << "[error] Web directory not found: " << webDir << "\n";
         status = STATUS_CONFIG_ERROR;
+    } else if (!svr.bind_to_port("0.0.0.0", port)) {
+        std::cerr << "[error] Failed to bind to port " << port << " (already in use?)\n";
+        status = STATUS_SERVER_ERROR;
     } else {
         std::cout << "[startup] Initializing matchers (this may take a moment)...\n";
         WebHandler handler(artwork, grid, modelPath);
@@ -215,11 +265,10 @@ int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string&
             return httplib::Server::HandlerResponse::Unhandled;
         });
 
-        printBanner(port);
-
-        // 0.0.0.0 so phones on the local network can reach the server
-        if (!svr.listen("0.0.0.0", port)) {
-            std::cerr << "[error] Failed to bind to port " << port << "\n";
+        printBanner(port, static_cast<long>(std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::steady_clock::now() - started).count()));
+        if (!svr.listen_after_bind()) {
+            std::cerr << "[error] Server stopped unexpectedly\n";
             status = STATUS_SERVER_ERROR;
         }
     }
@@ -235,6 +284,8 @@ int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string&
 // Errors: STATUS_BAD_ARGS, STATUS_CONFIG_ERROR or STATUS_SERVER_ERROR, each with
 //         a message on stderr
 int main(int argc, char* argv[]) {
+    const auto started = std::chrono::steady_clock::now();
+    std::cout << std::unitbuf;   // flush every message, so a log file is current
     Options    opts;
     GridConfig grid;
     cv::Mat    artwork;
@@ -251,7 +302,7 @@ int main(int argc, char* argv[]) {
             status = loadArtwork(opts.configDir, grid, artwork);
         if (status == STATUS_OK)
             status = runServer(artwork, grid, findModel(opts.configDir), opts.webDir,
-                               opts.samplesDir, opts.port);
+                               opts.samplesDir, opts.port, started);
     }
 
     return status;

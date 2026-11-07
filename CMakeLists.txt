@@ -79,21 +79,13 @@ target_link_libraries(argus_core PUBLIC
 # The server
 add_executable(argus src/main.cpp)
 target_link_libraries(argus PRIVATE argus_core)
+# Default config/ and web/ are the repo's own, so argus runs from any directory
+target_compile_definitions(argus PRIVATE ARGUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Matcher accuracy/speed benchmark on simulated pieces (see tools/bench.cpp)
 add_executable(argus_bench tools/bench.cpp)
 target_link_libraries(argus_bench PRIVATE argus_core)
-
-# ── Copy config/ and web/ to build directory after build ────────────────────────
-add_custom_command(TARGET argus POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/config
-        $<TARGET_FILE_DIR:argus>/config
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/web
-        $<TARGET_FILE_DIR:argus>/web
-    COMMENT "Copying config/ and web/ to build directory"
-)
+target_compile_definitions(argus_bench PRIVATE ARGUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 if(NOT CMAKE_BUILD_TYPE)

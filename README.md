@@ -38,16 +38,20 @@ The MobileNetV2 model for the ML matcher ships in the repo as
 Apache-2.0). If it is missing, the server still starts and the ML matcher
 reports itself as unavailable.
 
-`config/` is copied into `build/config/` on every build, so edit the files in
-the repo's `config/`, not the copies.
+Argus reads the repo's `config/` and `web/` directly (their location is compiled
+in), so edits there take effect on the next start.
 
 ## Run
 
 ```bash
-cd build
-./argus
+build/argus                     # from the repo; works from any directory
 # or with custom options:
-./argus --port 8080 --config-dir ../config --web-dir ../web
+build/argus --port 8080 --config-dir /path/to/config --web-dir /path/to/web
+```
+
+To type just `argus`, link it into a directory on your `PATH`:
+```bash
+ln -s "$PWD/build/argus" ~/.local/bin/argus
 ```
 
 The server binds to `0.0.0.0:8080` — accessible from any device on the same network.
@@ -77,19 +81,20 @@ Then open `http://<laptop-ip>:8080` on your smartphone.
 
 ```bash
 cd build
-./argus_bench                       # config/, 40 samples, piece count from grid.json
-./argus_bench config 40 1000 5000   # compare piece counts
+./argus_bench                       # 40 samples, piece count from grid.json
+./argus_bench 40 1000 5000          # compare piece counts
+./argus_bench /other/config 40      # another config directory
 ```
 
 To score real photos, put them in `samples/` named by their true cell
 (`C5.jpg`, `C5_2.jpg`, …), cut them out with the page's own code, then score.
 To add or replace sample photos straight from the phone, start the server with
-`--samples-dir ../samples` and open `http://<laptop-ip>:8080/admin.html`
+`--samples-dir samples` (from the repo) and open `http://<laptop-ip>:8080/admin.html`
 (a temporary admin page: pick the cell, take the photo, save).
 
 ```bash
 node tools/cutsamples.mjs                     # samples/ → samples/cut/
-cd build && ./argus_bench config --real ../samples/cut
+build/argus_bench --real samples/cut
 ```
 
 ## Grid configuration

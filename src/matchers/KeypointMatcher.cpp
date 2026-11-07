@@ -26,8 +26,13 @@ constexpr float  FULL_CONFIDENCE_INLIERS = 20.0f;
 // BFMatcher limit on descriptors per train set (OpenCV's IMGIDX_ONE)
 constexpr int MATCH_CHUNK = 200000;
 
-// Two nearest artwork descriptors per query (Hamming), searching the artwork in
-// chunks to stay under BFMatcher's train-set limit. trainIdx indexes `train`.
+// Two nearest artwork descriptors per piece descriptor (Hamming distance),
+// searching the artwork in chunks to stay under BFMatcher's train-set limit
+// In:     query — piece ORB descriptors, one CV_8U row each
+//         train — artwork ORB descriptors, same format
+// Out:    per query row, up to 2 matches sorted by distance; trainIdx indexes
+//         the whole of train
+// Errors: may throw cv::Exception if the descriptor widths differ
 std::vector<std::vector<cv::DMatch>> twoNearest(const cv::Mat& query, const cv::Mat& train) {
     std::vector<std::vector<cv::DMatch>> best(query.rows);
     cv::BFMatcher matcher(cv::NORM_HAMMING);

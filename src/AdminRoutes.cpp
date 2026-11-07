@@ -15,17 +15,32 @@ namespace {
 
 const std::vector<std::string> IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"};
 
+// Fills an error response with the JSON body {"error": message}
+// In:     res        — response to fill
+//         httpStatus — e.g. 400
+//         message    — human-readable reason, shown by the admin page
+// Out:    none (res is modified)
+// Errors: none
 void sendError(httplib::Response& res, int httpStatus, const std::string& message) {
     res.status = httpStatus;
     res.set_content(nlohmann::json{{"error", message}}.dump(), "application/json");
 }
 
+// ASCII lower-case copy, for file extensions
+// In:     s — any string
+// Out:    s with A–Z turned into a–z
+// Errors: none
 std::string lowercase(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 
+// Whether label names a cell of the grid (exact, case-sensitive)
+// In:     grid  — cell layout
+//         label — e.g. "C5"
+// Out:    true if some cell has that label
+// Errors: none
 bool isCellLabel(const GridConfig& grid, const std::string& label) {
     bool found = false;
     for (const GridCell& c : grid.allCells())
@@ -33,7 +48,12 @@ bool isCellLabel(const GridConfig& grid, const std::string& label) {
     return found;
 }
 
-// Sample files per cell label, by name: "C5.jpg" and "C5_2.jpg" both belong to C5
+// Sample photos per cell, by file name: "C5.jpg" and "C5_2.jpg" both belong to C5.
+// Only .jpg/.jpeg/.png files named after a real cell are listed.
+// In:     grid       — validates the labels
+//         samplesDir — directory to scan (not recursive)
+// Out:    label → sorted file names; cells without samples are absent
+// Errors: none; a missing or unreadable directory gives an empty map
 std::map<std::string, std::vector<std::string>> listSamples(const GridConfig& grid,
                                                             const std::string& samplesDir) {
     std::map<std::string, std::vector<std::string>> cells;
@@ -52,7 +72,13 @@ std::map<std::string, std::vector<std::string>> listSamples(const GridConfig& gr
     return cells;
 }
 
-// First free name for a new sample of `label`: C5.jpg, else C5_2.jpg, C5_3.jpg, …
+// First free name for a new sample of a cell: C5.jpg, else C5_2.jpg, C5_3.jpg, …
+// A name counts as taken whatever its extension (C5.png blocks C5.jpg).
+// In:     existing — file names already saved for this cell
+//         label    — the cell label
+//         ext      — extension for the new file, with the dot
+// Out:    the new file name
+// Errors: none
 std::string nextName(const std::vector<std::string>& existing, const std::string& label,
                      const std::string& ext) {
     std::vector<std::string> stems;

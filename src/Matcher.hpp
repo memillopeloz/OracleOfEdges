@@ -30,16 +30,33 @@ class Matcher {
 public:
     virtual ~Matcher() = default;
 
-    // Called once at startup with the full reference artwork. Precompute whatever
-    // per-cell data the matcher needs (crops, histograms, keypoints, embeddings)
-    // and keep a copy of the grid for labelling results.
+    // Precomputes everything match() needs from the artwork (tiles, histograms,
+    // keypoints, embeddings) and keeps a copy of the grid for labelling results.
+    // Called once at startup, before any match().
+    // In:     artwork — full reference image, CV_8UC3 BGR
+    //         grid    — cell layout; grid.pieces (if > 0) gives the expected piece scale
+    // Out:    none; the matcher's state is filled
+    // Errors: may throw cv::Exception or std::bad_alloc on an unusable artwork.
+    //         A matcher that cannot run at all reports it through available().
     virtual void prepare(const cv::Mat& artwork, const GridConfig& grid) = 0;
 
-    // May be called from several threads at once — must not mutate matcher state.
+    // Locates one piece in the artwork. Safe to call from several threads at
+    // once: implementations must not mutate matcher state.
+    // In:     piece — normalized piece from matcher_utils::makePiece (non-empty bgr)
+    // Out:    the best cell, a confidence in [0, 1], elapsed time and matcher name
+    // Errors: not expected to throw; sets MatchResult::error (row/col = -1) when no
+    //         answer could be produced (no features, piece too small, model missing)
     virtual MatchResult match(const Piece& piece) const = 0;
 
+    // Display name, also the key the client uses to select the matcher
+    // In:     none
+    // Out:    e.g. "Template"
+    // Errors: none
     virtual std::string name() const = 0;
 
-    // False when the matcher cannot run (e.g. the ML model file is missing)
+    // Whether the matcher can run (e.g. false when the ML model file is missing)
+    // In:     none
+    // Out:    true if match() can produce results
+    // Errors: none
     virtual bool available() const { return true; }
 };

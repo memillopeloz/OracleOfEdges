@@ -34,6 +34,12 @@ struct Field {
     std::string_view raw;     // the whole encoded field, key included
 };
 
+// Reads one base-128 varint
+// In:     bytes — encoded data
+//         pos   — offset of the varint; advanced past it
+// Out:    the decoded value
+// Errors: throws std::runtime_error if the data ends mid-varint or the varint
+//         is longer than 64 bits
 uint64_t readVarint(std::string_view bytes, size_t& pos) {
     uint64_t value = 0;
     int      shift = 0;
@@ -49,6 +55,12 @@ uint64_t readVarint(std::string_view bytes, size_t& pos) {
     return value;
 }
 
+// Splits a protobuf message into its top-level fields, without decoding them
+// In:     bytes — an encoded message (views into it are returned, so it must
+//                 outlive the result)
+// Out:    the fields in order
+// Errors: throws std::runtime_error on a bad varint, an unsupported wire type
+//         (groups) or a length running past the end
 std::vector<Field> parseFields(std::string_view bytes) {
     std::vector<Field> fields;
     size_t pos = 0;
@@ -73,6 +85,10 @@ std::vector<Field> parseFields(std::string_view bytes) {
     return fields;
 }
 
+// Encodes a base-128 varint
+// In:     value — any value
+// Out:    1–10 bytes
+// Errors: none
 std::string encodeVarint(uint64_t value) {
     std::string out;
     do {
@@ -85,10 +101,21 @@ std::string encodeVarint(uint64_t value) {
     return out;
 }
 
+// Encodes a varint field (key + value)
+// In:     number — field number
+//         value  — field value
+// Out:    the encoded field
+// Errors: none
 std::string varintField(uint32_t number, uint64_t value) {
     return encodeVarint(static_cast<uint64_t>(number) << 3 | WIRE_VARINT) + encodeVarint(value);
 }
 
+// Encodes a length-delimited field (key + length + payload): strings,
+// bytes and nested messages
+// In:     number  — field number
+//         payload — field contents
+// Out:    the encoded field
+// Errors: none
 std::string lengthField(uint32_t number, std::string_view payload) {
     return encodeVarint(static_cast<uint64_t>(number) << 3 | WIRE_LENGTH)
          + encodeVarint(payload.size()) + std::string(payload);

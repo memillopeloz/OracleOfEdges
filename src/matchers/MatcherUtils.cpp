@@ -11,7 +11,13 @@ constexpr int    PIECE_MAX_DIM = 800;   // uploaded piece is capped to this
 constexpr double FALLBACK_CORE = 0.6;   // centre fraction used when no outline is supplied
 constexpr double ERODE_FRAC    = 0.02;  // mask erosion, as a fraction of the piece's size
 
-// Rotate by `angle` degrees, enlarging the canvas so nothing is cut off
+// Rotates about the centre, enlarging the canvas so nothing is cut off
+// In:     img           — any image
+//         angle         — degrees, counter-clockwise
+//         interpolation — cv::warpAffine flag
+//         border        — how the new corners are filled (cv::BorderTypes)
+// Out:    the rotated image, at least as large as img
+// Errors: none for a non-empty image
 cv::Mat rotateBound(const cv::Mat& img, double angle, int interpolation, int border) {
     const cv::Point2f centre(img.cols / 2.0f, img.rows / 2.0f);
     cv::Mat R = cv::getRotationMatrix2D(centre, angle, 1.0);
@@ -29,6 +35,9 @@ cv::Mat rotateBound(const cv::Mat& img, double angle, int interpolation, int bor
 // Dominant edge direction of a piece outline, in degrees within (-45, 45].
 // The body's straight edges agree modulo 90°, while the round knobs point every
 // way and cancel out, so a length-weighted circular mean of 4θ finds the edges.
+// In:     contour — closed outline, as from cv::findContours (CHAIN_APPROX_NONE)
+// Out:    angle in degrees; rotating by it makes the edges axis-aligned
+// Errors: none; an empty contour returns 0
 double dominantEdgeAngle(const std::vector<cv::Point>& contour) {
     const size_t n    = contour.size();
     const size_t step = std::max<size_t>(3, n / 60);  // long enough to smooth pixel staircases
@@ -45,6 +54,10 @@ double dominantEdgeAngle(const std::vector<cv::Point>& contour) {
 
 // Largest axis-aligned square fully inside the mask: start from the circle
 // inscribed at the distance-transform peak, then grow while it stays inside.
+// In:     mask — CV_8U, 255 inside the piece and 0 outside
+// Out:    the square, clipped to the mask's bounds; 1×1 at the peak for a
+//         sliver too thin to hold more
+// Errors: none; an all-zero mask gives a 1×1 square at the top-left
 cv::Rect inscribedSquare(const cv::Mat& mask) {
     cv::Mat dist, sum;
     cv::distanceTransform(mask, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);

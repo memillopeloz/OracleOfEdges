@@ -55,6 +55,12 @@ struct Tally {
 
 // Jigsaw outline: a w × h body centred at c with a knob or a blank on each side,
 // each slightly off-centre and of varying size, as on the real (irregular) pieces
+// In:     size — mask size, px
+//         c    — body centre, px
+//         w, h — body width and height, px
+//         rng  — random source (advanced)
+// Out:    CV_8U mask, 255 inside the piece
+// Errors: none
 cv::Mat jigsawMask(cv::Size size, cv::Point2f c, double w, double h, std::mt19937& rng) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
     cv::Mat mask = cv::Mat::zeros(size, CV_8U);
@@ -80,8 +86,15 @@ cv::Mat jigsawMask(cv::Size size, cv::Point2f c, double w, double h, std::mt1993
     return mask;
 }
 
-// Simulated client cut-out (BGRA) of a jigsaw piece of mean body side `side`
-// centred at c, degraded like a phone photo of the sepia print
+// Simulated client cut-out of a jigsaw piece, degraded like a phone photo of
+// the sepia print (see the file header for the list of effects)
+// In:     art  — full artwork, CV_8UC3 BGR
+//         c    — piece centre in artwork px, at least `side` from every edge
+//         side — mean body side in artwork px
+//         rng  — random source (advanced)
+// Out:    BGRA cut-out cropped to the outline, alpha = outline, ≤ 1024 px
+// Errors: none for valid input; a centre too close to the edge may clip the
+//         piece (cv::Exception if the region becomes empty)
 cv::Mat simulateCutout(const cv::Mat& art, cv::Point2f c, double side, std::mt19937& rng) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
 
@@ -193,6 +206,13 @@ cv::Mat simulateCutout(const cv::Mat& art, cv::Point2f c, double side, std::mt19
     return matcher_utils::limitSize(cut, 1024);
 }
 
+// Prints one row per matcher: accuracy, mean time, mean confidence on hits and
+// on misses
+// In:     names   — matchers, in display order
+//         tallies — per-matcher totals (missing names read as zero)
+//         samples — number of pieces scored (> 0)
+// Out:    none (stdout)
+// Errors: none
 void printTallies(const std::vector<std::string>& names, std::map<std::string, Tally>& tallies,
                   int samples) {
     std::printf("  %-10s %8s %10s %14s\n", "matcher", "accuracy", "avg time", "conf hit/miss");
@@ -206,6 +226,15 @@ void printTallies(const std::vector<std::string>& names, std::map<std::string, T
     std::fflush(stdout);
 }
 
+// Scores every matcher on simulated pieces at random positions (fixed seed) and
+// prints the tallies
+// In:     art       — full artwork, CV_8UC3 BGR
+//         grid      — cell layout; grid.pieces sets the simulated piece size
+//                     (0 = simulate a 1000-piece puzzle, matchers search blind)
+//         modelPath — ONNX model; empty = ML unavailable
+//         samples   — number of simulated pieces (> 0)
+// Out:    none (stdout)
+// Errors: exceptions from WebHandler construction propagate
 void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath, int samples) {
     const auto t0 = std::chrono::steady_clock::now();
     const WebHandler handler(art, grid, modelPath);
@@ -237,7 +266,11 @@ void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath,
     printTallies(names, tallies, samples);
 }
 
-// Cell (col, row) whose label matches the file name up to the first '_'; (-1, -1) if none
+// True cell of a sample photo, from its file name ("C5" or "C5_2" → C5)
+// In:     grid — cell layout
+//         stem — file name without extension
+// Out:    (col, row) of the matching cell; (-1, -1) if the name isn't a cell label
+// Errors: none
 cv::Point cellFromName(const GridConfig& grid, const std::string& stem) {
     const std::string label = stem.substr(0, stem.find('_'));
     cv::Point cell(-1, -1);
@@ -247,6 +280,15 @@ cv::Point cellFromName(const GridConfig& grid, const std::string& stem) {
     return cell;
 }
 
+// Scores every matcher on real cut-outs (from tools/cutsamples.mjs) named by
+// their true cell, printing each photo's answers (+ = correct) and the tallies
+// In:     art       — full artwork, CV_8UC3 BGR
+//         grid      — cell layout
+//         modelPath — ONNX model; empty = ML unavailable
+//         cutDir    — directory of .png cut-outs
+// Out:    none (stdout)
+// Errors: files not named after a cell, or unreadable, are listed as skipped;
+//         a missing cutDir throws std::filesystem::filesystem_error
 void runReal(const cv::Mat& art, const GridConfig& grid, const std::string& modelPath,
              const std::string& cutDir) {
     std::vector<fs::path> files;
@@ -299,6 +341,11 @@ void runReal(const cv::Mat& art, const GridConfig& grid, const std::string& mode
 
 } // namespace
 
+// Entry point; see the usage in the file header
+// In:     argv — [config-dir] [samples [pieces...] | --real <cut-dir>]
+// Out:    0 on success
+// Errors: 1 on any exception (bad number, unreadable grid.json, missing cut
+//         directory), 2 if the artwork can't be read; message on stderr
 int main(int argc, char* argv[]) {
     int status = 0;
     try {

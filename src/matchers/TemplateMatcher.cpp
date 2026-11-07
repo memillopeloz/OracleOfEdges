@@ -39,6 +39,12 @@ struct Candidate {
 // Best normalized-correlation peak of the piece scaled by `scale` into `image`.
 // Pixels outside the outline hold the piece's mean, so they add nothing to the
 // zero-mean correlation — nearly a masked match at FFT speed.
+// In:     image — grey artwork at the resolution being searched
+//         piece — grey piece, background already filled with its mean
+//         scale — image px per piece px
+// Out:    the peak (score in [-1, 1], centre in image px); found = false when
+//         the scaled piece is under 6 px or not smaller than the image
+// Errors: none (an unsearchable size is reported through found)
 Peak bestPeak(const cv::Mat& image, const cv::Mat& piece, double scale) {
     Peak peak;
     cv::Mat tmpl;

@@ -39,6 +39,11 @@ struct Options {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Prints the command-line help
+// In:     prog — program name for the usage line (argv[0])
+//         out  — std::cout for --help, std::cerr after a bad argument
+// Out:    none
+// Errors: none
 void printUsage(const char* prog, std::ostream& out) {
     out << "Usage: " << prog << " [options]\n"
         << "\nOptions:\n"
@@ -53,7 +58,11 @@ void printUsage(const char* prog, std::ostream& out) {
         << "  mobilenetv2.onnx     MobileNetV2 model (ML matcher is unavailable without it)\n";
 }
 
-// Parses a TCP port (1–65535) into `port`
+// Parses a TCP port number
+// In:     text — the option's value, e.g. "8080"
+// Out:    port (set only on success); returns STATUS_OK or STATUS_BAD_ARGS
+// Errors: STATUS_BAD_ARGS, with a message on stderr, if text isn't a whole
+//         number in 1–65535
 int parsePort(const std::string& text, int& port) {
     int status = STATUS_BAD_ARGS;
     try {
@@ -71,6 +80,11 @@ int parsePort(const std::string& text, int& port) {
     return status;
 }
 
+// Parses the command line into opts; stops at the first bad argument
+// In:     argc, argv — as given to main
+// Out:    opts (defaults kept for absent options); returns STATUS_OK or STATUS_BAD_ARGS
+// Errors: STATUS_BAD_ARGS, with a message on stderr, for an unknown option, an
+//         option missing its value, or an invalid port
 int parseArgs(int argc, char* argv[], Options& opts) {
     int status = STATUS_OK;
     for (int i = 1; i < argc && status == STATUS_OK; ++i) {
@@ -90,6 +104,11 @@ int parseArgs(int argc, char* argv[], Options& opts) {
     return status;
 }
 
+// Loads <configDir>/grid.json, logging progress
+// In:     configDir — config directory
+// Out:    grid (set only on success); returns STATUS_OK or STATUS_CONFIG_ERROR
+// Errors: STATUS_CONFIG_ERROR, with the reason on stderr, for any error thrown
+//         by GridConfig::fromFile
 int loadGrid(const std::string& configDir, GridConfig& grid) {
     int status = STATUS_OK;
     const std::string gridPath = (fs::path(configDir) / GRID_FILE).string();
@@ -104,6 +123,13 @@ int loadGrid(const std::string& configDir, GridConfig& grid) {
     return status;
 }
 
+// Reads the artwork image named by the grid config, logging its size
+// In:     configDir — config directory (for the error message only)
+//         grid      — supplies artworkPath
+// Out:    artwork as CV_8UC3 BGR (set only on success); returns STATUS_OK or
+//         STATUS_CONFIG_ERROR
+// Errors: STATUS_CONFIG_ERROR, with a message on stderr, if no artwork was found
+//         or the file can't be decoded
 int loadArtwork(const std::string& configDir, const GridConfig& grid, cv::Mat& artwork) {
     int status = STATUS_CONFIG_ERROR;
     if (grid.artworkPath.empty()) {
@@ -123,7 +149,11 @@ int loadArtwork(const std::string& configDir, const GridConfig& grid, cv::Mat& a
     return status;
 }
 
-// Path to the ONNX model, or empty if absent (the ML matcher then reports itself unavailable)
+// Locates the MobileNetV2 model in the config directory, logging the outcome
+// In:     configDir — config directory
+// Out:    path to the ONNX model; empty if absent (the ML matcher then reports
+//         itself unavailable)
+// Errors: none; a missing model is not an error
 std::string findModel(const std::string& configDir) {
     std::string modelPath = (fs::path(configDir) / MODEL_FILE).string();
     if (fs::exists(modelPath)) {
@@ -136,6 +166,10 @@ std::string findModel(const std::string& configDir) {
     return modelPath;
 }
 
+// Prints the "server is up" banner with the addresses to open
+// In:     port — listen port
+// Out:    none
+// Errors: none
 void printBanner(int port) {
     std::cout << "\n========================================\n"
               << "  Argus is watching  (OracleOfEdges)\n"
@@ -145,7 +179,17 @@ void printBanner(int port) {
               << "========================================\n\n";
 }
 
-// Blocks until the server stops
+// Mounts the web page, prepares the matchers, registers the API (and the admin
+// API if samplesDir is set), then serves on 0.0.0.0:port. Blocks until the
+// server stops.
+// In:     artwork, grid, modelPath — as loaded at startup
+//         webDir     — static page directory, mounted at /
+//         samplesDir — admin page sample directory; empty = admin page off
+//         port       — listen port
+// Out:    STATUS_OK after a normal stop, else an error status
+// Errors: STATUS_CONFIG_ERROR if webDir doesn't exist (checked before the slow
+//         matcher setup); STATUS_SERVER_ERROR if the port can't be bound.
+//         Exceptions from matcher preparation propagate.
 int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string& modelPath,
               const std::string& webDir, const std::string& samplesDir, int port) {
     int status = STATUS_OK;
@@ -185,6 +229,11 @@ int runServer(const cv::Mat& artwork, const GridConfig& grid, const std::string&
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Entry point: parse options, load grid and artwork, run the server
+// In:     argc, argv — see printUsage
+// Out:    exit status (Status enum): 0 on success or --help
+// Errors: STATUS_BAD_ARGS, STATUS_CONFIG_ERROR or STATUS_SERVER_ERROR, each with
+//         a message on stderr
 int main(int argc, char* argv[]) {
     Options    opts;
     GridConfig grid;

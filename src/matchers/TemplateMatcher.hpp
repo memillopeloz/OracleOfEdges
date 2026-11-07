@@ -10,8 +10,26 @@
 // Coarse pass first, then the strongest candidates at working resolution.
 class TemplateMatcher : public Matcher {
 public:
+    // Keeps a grey copy of the artwork at working resolution (a piece ≈ 32 px
+    // across when the piece count is known, else 1200 px wide) and a half-size
+    // copy for the coarse pass.
+    // In:     artwork — full reference image, CV_8UC3 BGR
+    //         grid    — cell layout; grid.pieces sets the working scale
+    // Out:    none
+    // Errors: may throw cv::Exception / std::bad_alloc on an unusable artwork
     void prepare(const cv::Mat& artwork, const GridConfig& grid) override;
+
+    // Correlates the grey piece (outside the outline filled with its mean) in 4
+    // orientations × candidate scales on the coarse artwork, then re-runs the
+    // top 3 at working resolution and takes the strongest peak.
+    // In:     piece — normalized piece; its area sets the expected scale
+    // Out:    the cell under the peak's centre; confidence = the peak's
+    //         normalized correlation (barely lower when wrong — poorly calibrated)
+    // Errors: error "Piece photo too small to search" (row/col = -1) when no
+    //         scaled template fits between 6 px and the artwork size
     MatchResult match(const Piece& piece) const override;
+
+    // In: none.  Out: "Template".  Errors: none.
     std::string name() const override { return "Template"; }
 
 private:

@@ -11,6 +11,9 @@ namespace fs = std::filesystem;
 namespace {
 
 // Spreadsheet-style row labels: A … Z, AA, AB, …
+// In:     count — number of labels
+// Out:    count labels
+// Errors: none
 std::vector<std::string> defaultRowLabels(int count) {
     std::vector<std::string> labels;
     for (int i = 0; i < count; ++i) {
@@ -23,6 +26,9 @@ std::vector<std::string> defaultRowLabels(int count) {
 }
 
 // 1-based numeric column labels: 1, 2, …
+// In:     count — number of labels
+// Out:    count labels
+// Errors: none
 std::vector<std::string> defaultColLabels(int count) {
     std::vector<std::string> labels;
     for (int i = 1; i <= count; ++i)
@@ -30,7 +36,10 @@ std::vector<std::string> defaultColLabels(int count) {
     return labels;
 }
 
-// First artwork.<ext> found in dir, or empty
+// Looks for the artwork image in a directory, trying .jpg, .jpeg, .png, .bmp, .tiff
+// In:     dir — directory to search
+// Out:    path of the first artwork.<ext> found; empty if none
+// Errors: throws std::filesystem::filesystem_error if dir can't be accessed
 std::string findArtwork(const fs::path& dir) {
     std::string found;
     for (const char* ext : {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}) {
@@ -109,5 +118,5 @@ std::vector<GridCell> GridConfig::allCells() const {
     for (int r = 0; r < rows; ++r)
         for (int c = 0; c < cols; ++c)
             cells.push_back({r, c, coordLabel(r, c)});
-    return std::move(cells);
+    return cells;
 }

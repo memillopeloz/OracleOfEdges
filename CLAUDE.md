@@ -37,7 +37,7 @@ The server flow is: HTTP upload (piece photo + the set of matchers the user sele
 
 **`Matcher` (abstract interface, [src/Matcher.hpp](src/Matcher.hpp))** — lifecycle is `prepare(artwork, grid)` once at startup (precompute per-cell crops/histograms/keypoints/embeddings, keep the grid), then `match(piece) const → MatchResult` per request. `match` runs concurrently from multiple threads and must not mutate state. `available()` returns false when a matcher can't run (e.g. ML model missing). `MatchResult` carries row, col, coord string (e.g. `"B3"`), confidence (0.0–1.0), `timeMs`, matcher name, and `error` (empty on success). Build results with `matcher_utils::makeResult`, which stamps label and elapsed time.
 
-**`matcher_utils` ([src/matchers/MatcherUtils.hpp](src/matchers/MatcherUtils.hpp))** — shared helpers: `limitSize`, `centerCrop` (trims table background/knobs from the photo), `cellTiles` (overlapping piece-sized sub-windows of each cell, used by Histogram and ML), `cellAt` (artwork pixel → cell).
+**`matcher_utils` ([src/matchers/MatcherUtils.hpp](src/matchers/MatcherUtils.hpp))** — shared helpers: `limitSize`, `makePiece` (upload → normalized `Piece`), `gridTiles` (piece-sized tiles over the whole artwork, used by Histogram and ML when the piece count is known), `cellTiles` (overlapping sub-windows of each cell, when it isn't), `cellAt` (artwork pixel → cell), `makeResult`.
 
 **`GridConfig` ([src/GridConfig.hpp](src/GridConfig.hpp))** — parses `grid.json`; key methods are `cellRect(row, col, artworkSize)` which slices the artwork into cells, `coordLabel(row, col)` for human-readable coordinates, and `allCells()` for iteration. Declarations in the header, implementation in `GridConfig.cpp`. At parse time: missing labels are generated, label counts are validated, and `artworkPath` is resolved against the config directory (explicit `artwork_path`, else a search for `artwork.*`).
 
@@ -80,6 +80,7 @@ Each matcher lives in `src/matchers/` (`.hpp` + `.cpp`) and inherits from `Match
 
 ## Code style
 
+- Every function has a preceding comment: summary, then `In:`, `Out:` and `Errors:` lines. Public methods are documented at the declaration (header), file-local helpers in the `.cpp`.
 
 - One `return` per function; track failure in a status variable where 0 = success (see `main.cpp`'s `Status` enum).
 - Each file includes what it uses directly; don't rely on transitive includes.

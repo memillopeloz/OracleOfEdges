@@ -18,11 +18,21 @@ namespace {
 // Longest side of the artwork overview shown on the page
 constexpr int OVERVIEW_MAX_DIM = 1600;
 
+// Fills an error response with the JSON body {"error": message}
+// In:     res        — response to fill
+//         httpStatus — e.g. 400
+//         message    — human-readable reason, shown by the page
+// Out:    none (res is modified)
+// Errors: none
 void sendError(httplib::Response& res, int httpStatus, const std::string& message) {
     res.status = httpStatus;
     res.set_content(nlohmann::json{{"error", message}}.dump(), "application/json");
 }
 
+// ASCII lower-case copy, for case-insensitive matcher names
+// In:     s — any string
+// Out:    s with A–Z turned into a–z
+// Errors: none
 std::string lowercase(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -49,11 +59,7 @@ WebHandler::WebHandler(cv::Mat artwork, GridConfig grid, std::string modelPath)
                  {cv::IMWRITE_JPEG_QUALITY, 85});
 }
 
-// Routes:
-//   GET  /api/info     grid layout and matchers (name, available)
-//   GET  /api/artwork  downscaled artwork JPEG for the overview
-//   POST /api/locate   multipart: "piece" = PNG cut-out (alpha = outline),
-//                      "matcher" = one field per selected matcher
+// Routes are documented in WebHandler.hpp
 void WebHandler::registerRoutes(httplib::Server& svr) {
     svr.Get("/api/info", [this](const httplib::Request&, httplib::Response& res) {
         nlohmann::json matchers = nlohmann::json::array();

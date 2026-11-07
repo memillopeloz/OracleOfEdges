@@ -11,7 +11,13 @@ namespace {
 // Piece count known: search around the expected scale, with the artwork reduced
 // so a piece spans about TARGET_PIECE_PX.
 constexpr double TARGET_PIECE_PX = 32.0;
-const std::vector<double> SCALE_FACTORS = {0.8, 0.9, 1.0, 1.1, 1.2};
+// Factors above 1 dominate: √area includes knobs and the photo's rim, so the
+// expected scale comes out too small.
+const std::vector<double> SCALE_FACTORS = {1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6};
+
+// Extra erosion of the outline, as a fraction of √area, before the mean fill:
+// drops the dark rim (cut side + shadow) that cut-outs often keep.
+constexpr double EXTRA_ERODE_FRAC = 0.025;
 
 // Piece count unknown: fixed working width, and the template's width swept
 // geometrically between these fractions of the artwork (≈100–3000 pieces).
@@ -83,7 +89,12 @@ MatchResult TemplateMatcher::match(const Piece& piece) const {
 
     cv::Mat gray;
     cv::cvtColor(piece.bgr, gray, cv::COLOR_BGR2GRAY);
-    gray.setTo(cv::mean(gray, piece.mask), ~piece.mask);
+    const int radius = static_cast<int>(std::lround(EXTRA_ERODE_FRAC * std::sqrt(piece.area)));
+    cv::Mat   mask   = piece.mask;
+    if (radius > 0)
+        cv::erode(piece.mask, mask,
+                  cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(2 * radius + 1, 2 * radius + 1)));
+    gray.setTo(cv::mean(gray, mask), ~mask);
     std::vector<cv::Mat> orientations = {gray};
     for (int flag : {cv::ROTATE_90_CLOCKWISE, cv::ROTATE_180, cv::ROTATE_90_COUNTERCLOCKWISE}) {
         cv::Mat rotated;

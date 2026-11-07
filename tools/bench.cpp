@@ -1,8 +1,10 @@
 // argus_bench — measures each matcher's accuracy and speed on simulated pieces.
 //
 // Cuts random jigsaw-shaped pieces from the artwork and degrades them the way a
-// phone photo would (rotation, lighting, blur, noise, JPEG), then delivers them
-// as the client will: a BGRA cut-out cropped to the piece, alpha = outline.
+// phone photo of the physical print does (sepia toning, print tone shifts, blur,
+// grain, uneven light, table/shadow caught in the outline, rotation, JPEG), then
+// delivers them as the client will: a BGRA cut-out cropped to the piece, alpha =
+// outline. Tuned so its accuracies track `--real` on the sample photos.
 // A result counts as correct when it names the cell holding the piece's centre.
 //
 // Usage: argus_bench [config-dir] [samples] [pieces...]
@@ -35,9 +37,14 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr int    PHOTO_PX      = 700;   // simulated phone resolution of the piece region
-constexpr double KNOB_RADIUS   = 0.17;  // jigsaw knob radius, fraction of body side
-constexpr unsigned RANDOM_SEED = 7;     // fixed, so runs are comparable
+// Simulation parameters, measured on real phone photos of this puzzle (2026-11-06)
+constexpr double PHOTO_SCALE       = 6.0;   // photo px per artwork px (the client then caps at 1024 px)
+constexpr double BLUR_ART_PX       = 0.5;   // Gaussian blur sigma, in artwork px
+constexpr double COLOUR_KEPT       = 0.2;   // fraction of the original colour surviving the sepia print
+constexpr double CHANNEL_JITTER    = 0.25;  // per-piece spread of the print's channel weights
+constexpr double DENSITY_VARIATION = 0.15;  // low-frequency ink density variation across a piece
+constexpr double RIM_FRACTION      = 0.045; // background/shadow band inside the outline, × piece side
+constexpr unsigned RANDOM_SEED     = 7;     // fixed, so runs are comparable
 
 struct Tally {
     int    hits      = 0;
@@ -46,48 +53,144 @@ struct Tally {
     double confMiss  = 0.0;
 };
 
-// Simulated client cut-out (BGRA) of a jigsaw piece with body side `side` centred at c
+// Jigsaw outline: a w × h body centred at c with a knob or a blank on each side,
+// each slightly off-centre and of varying size, as on the real (irregular) pieces
+cv::Mat jigsawMask(cv::Size size, cv::Point2f c, double w, double h, std::mt19937& rng) {
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    cv::Mat mask = cv::Mat::zeros(size, CV_8U);
+    cv::rectangle(mask, cv::Rect2f(c.x - w / 2, c.y - h / 2, w, h), cv::Scalar(255), cv::FILLED);
+    const double small = std::min(w, h);
+    const cv::Point2f dirs[4] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
+    for (const cv::Point2f dir : dirs) {
+        const bool knob = U(rng) < 0.5;
+        const double halfExtent = (dir.x != 0 ? w : h) / 2;
+        const cv::Point2f along(dir.y, dir.x);
+        const double radius = small * (0.16 + 0.08 * U(rng));
+        const cv::Point2f base = c + along * static_cast<float>((U(rng) - 0.5) * 0.3 * (dir.x != 0 ? h : w));
+        const cv::Point2f knobCentre = base + dir * static_cast<float>(halfExtent + (knob ? 0.9 : -0.9) * radius);
+        cv::circle(mask, knobCentre, static_cast<int>(radius), cv::Scalar(knob ? 255 : 0), cv::FILLED);
+        // neck joining a knob to the body
+        const cv::Point2f n1 = base + along * static_cast<float>(radius * 0.55);
+        const cv::Point2f n2 = base - along * static_cast<float>(radius * 0.55);
+        const cv::Point2f reach = dir * static_cast<float>(knob ? 1.0 : -1.0) * static_cast<float>(radius);
+        const std::vector<cv::Point> neck = {n1 - reach * 0.2f, n1 + reach, n2 + reach, n2 - reach * 0.2f};
+        if (knob)
+            cv::fillConvexPoly(mask, neck, cv::Scalar(255));
+    }
+    return mask;
+}
+
+// Simulated client cut-out (BGRA) of a jigsaw piece of mean body side `side`
+// centred at c, degraded like a phone photo of the sepia print
 cv::Mat simulateCutout(const cv::Mat& art, cv::Point2f c, double side, std::mt19937& rng) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
+
+    // Rectangular body: some pieces wider, some taller, some about square
+    const double aspect = std::exp((U(rng) - 0.5) * 0.45);
+    const double w = side * std::sqrt(aspect), h = side / std::sqrt(aspect);
 
     const int half = static_cast<int>(side);
     const cv::Rect region = cv::Rect(static_cast<int>(c.x) - half, static_cast<int>(c.y) - half,
                                      2 * half, 2 * half) & cv::Rect(0, 0, art.cols, art.rows);
-    const double up = static_cast<double>(PHOTO_PX) / region.width;
     cv::Mat img;
-    cv::resize(art(region), img, cv::Size(), up, up, cv::INTER_CUBIC);
+    cv::resize(art(region), img, cv::Size(), PHOTO_SCALE, PHOTO_SCALE, cv::INTER_CUBIC);
+    const cv::Point2f centre = (c - cv::Point2f(region.tl())) * static_cast<float>(PHOTO_SCALE);
+    cv::Mat mask = jigsawMask(img.size(), centre, w * PHOTO_SCALE, h * PHOTO_SCALE, rng);
 
-    // Square body with a knob or a blank on each side
-    const cv::Point2f centre = (c - cv::Point2f(region.tl())) * static_cast<float>(up);
-    const double body = side * up;
-    cv::Mat mask = cv::Mat::zeros(img.size(), CV_8U);
-    cv::rectangle(mask, cv::Rect2f(centre.x - body / 2, centre.y - body / 2, body, body),
-                  cv::Scalar(255), cv::FILLED);
-    for (const cv::Point2f dir : {cv::Point2f(0, -1), cv::Point2f(1, 0), cv::Point2f(0, 1), cv::Point2f(-1, 0)}) {
-        const bool knob = U(rng) < 0.5;
-        cv::circle(mask, centre + dir * static_cast<float>(body * (knob ? 0.62 : 0.38)),
-                   static_cast<int>(body * KNOB_RADIUS), cv::Scalar(knob ? 255 : 0), cv::FILLED);
+    // Sepia print: mostly grey, warm cast (red ≈ grey, green ≈ 0.82, blue ≈ 0.66)
+    cv::Mat grey, grey3, colour;
+    // The print's brightness doesn't follow the file's grey: each region's inks
+    // weigh the channels differently (blue sky prints brown, white marble tan)
+    std::normal_distribution<double> N(0.0, 1.0);
+    double wb = std::max(0.0, 0.114 + CHANNEL_JITTER * N(rng));
+    double wg = std::max(0.0, 0.587 + CHANNEL_JITTER * N(rng));
+    double wr = std::max(0.0, 0.299 + CHANNEL_JITTER * N(rng));
+    const double wsum = std::max(1e-3, wb + wg + wr);
+    cv::transform(img, grey, cv::Matx13f(static_cast<float>(wb / wsum), static_cast<float>(wg / wsum),
+                                         static_cast<float>(wr / wsum)));
+    cv::cvtColor(grey, grey3, cv::COLOR_GRAY2BGR);
+    cv::addWeighted(img, COLOUR_KEPT, grey3, 1.0 - COLOUR_KEPT, 0.0, colour);
+    colour.convertTo(colour, CV_32FC3, 1.0 / 255);
+    cv::pow(colour, std::exp((U(rng) - 0.5) * 0.7), colour);   // print tone curve, gamma ≈ 0.7–1.4
+    colour *= 255.0;
+    const double gain = 0.85 + 0.3 * U(rng), contrast = 1.1 + 0.3 * U(rng);
+    const cv::Scalar mean = cv::mean(colour);
+    colour = (colour - mean) * contrast + mean;
+    cv::multiply(colour, cv::Scalar(gain * (0.62 + 0.08 * U(rng)), gain * (0.78 + 0.08 * U(rng)), gain), colour);
+
+    // Uneven lighting across the piece
+    cv::Mat light(img.size(), CV_32F);
+    const double gx = (U(rng) - 0.5) * 0.25 / img.cols, gy = (U(rng) - 0.5) * 0.25 / img.rows;
+    for (int y = 0; y < light.rows; ++y)
+        for (int x = 0; x < light.cols; ++x)
+            light.at<float>(y, x) = static_cast<float>(1.0 + gx * (x - centre.x) + gy * (y - centre.y));
+    // and ink density drifting across the print (blotches of about a third of a piece)
+    cv::Mat density(4, 4, CV_32F);
+    cv::randn(density, 0.0, DENSITY_VARIATION);
+    cv::resize(density, density, light.size(), 0, 0, cv::INTER_CUBIC);
+    light += density;
+    cv::Mat light3;
+    cv::merge(std::vector<cv::Mat>{light, light, light}, light3);
+    cv::multiply(colour, light3, colour);
+
+    // Band of table and shadow caught inside the outline, thicker on one side
+    const double rim = RIM_FRACTION * side * PHOTO_SCALE * (0.6 + 0.8 * U(rng));
+    const double shadowAngle = U(rng) * 2 * CV_PI;
+    cv::Mat outline, shifted;
+    const cv::Mat shift = (cv::Mat_<double>(2, 3) << 1, 0, rim * std::cos(shadowAngle), 0, 1, rim * std::sin(shadowAngle));
+    cv::warpAffine(mask, shifted, shift, mask.size(), cv::INTER_NEAREST);
+    const int grow = std::max(1, static_cast<int>(rim * 0.5));
+    cv::dilate(mask | shifted, outline, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(2 * grow + 1, 2 * grow + 1)));
+    // ragged edge, as the client's outline follows the photo's noise
+    cv::Mat edgeNoise(outline.size(), CV_32F), soft;
+    cv::randn(edgeNoise, 0, 1);
+    cv::GaussianBlur(edgeNoise, edgeNoise, cv::Size(0, 0), 0.6 * PHOTO_SCALE);
+    cv::normalize(edgeNoise, edgeNoise, -1.0, 1.0, cv::NORM_MINMAX);
+    outline.convertTo(soft, CV_32F, 1.0 / 255);
+    cv::GaussianBlur(soft, soft, cv::Size(0, 0), 0.8 * PHOTO_SCALE);
+    outline = (soft + 0.35 * edgeNoise) > 0.5;
+    const cv::Scalar table(30 + 15 * U(rng), 45 + 15 * U(rng), 65 + 20 * U(rng));
+    colour.setTo(table, outline & ~mask);
+
+    // Optics: blur, grain, sensor noise
+    cv::GaussianBlur(colour, colour, cv::Size(0, 0), BLUR_ART_PX * PHOTO_SCALE * (0.8 + 0.4 * U(rng)));
+    // Print and paper texture at several scales: {blur sigma in photo px, strength};
+    // real photos look smooth, a few grey levels of grain at most
+    const double TEXTURE[3][2] = {{0.6, 8.0}, {2.0, 10.0}, {5.0, 60.0}};
+    for (const auto& t : TEXTURE) {
+        cv::Mat grain(img.size(), CV_32F), grain3;
+        cv::randn(grain, 0, t[1]);
+        cv::GaussianBlur(grain, grain, cv::Size(0, 0), t[0]);
+        cv::merge(std::vector<cv::Mat>{grain * 0.75, grain * 0.88, grain}, grain3);
+        colour += grain3;
     }
+    cv::Mat noise(img.size(), CV_32FC3);
+    cv::randn(noise, 0, 3);
+    colour += noise;
+    colour.convertTo(img, CV_8UC3);
 
-    // Photo degradations
+    // Hand-held: any rotation, camera a few degrees off overhead (foreshortening); then JPEG
     const cv::Mat R = cv::getRotationMatrix2D(centre, U(rng) * 360.0, 1.0);
-    cv::warpAffine(img,  img,  R, img.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
-    cv::warpAffine(mask, mask, R, mask.size(), cv::INTER_NEAREST);
-    img.convertTo(img, -1, 0.8 + 0.35 * U(rng), U(rng) * 30.0 - 15.0);
-    cv::GaussianBlur(img, img, cv::Size(0, 0), 1.2);
-    cv::Mat noise(img.size(), CV_16SC3), wide;
-    cv::randn(noise, 0, 4);
-    img.convertTo(wide, CV_16SC3);
-    wide += noise;
-    wide.convertTo(img, CV_8UC3);
+    cv::Mat P = cv::Mat::eye(3, 3, CV_64F);
+    R.copyTo(P.rowRange(0, 2));
+    const double tilt = 0.09 * U(rng) / img.cols, tiltAngle = U(rng) * 2 * CV_PI;
+    const cv::Mat toCentre = (cv::Mat_<double>(3, 3) << 1, 0, -centre.x, 0, 1, -centre.y, 0, 0, 1);
+    const cv::Mat back     = (cv::Mat_<double>(3, 3) << 1, 0,  centre.x, 0, 1,  centre.y, 0, 0, 1);
+    const cv::Mat keystone = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0,
+                              tilt * std::cos(tiltAngle), tilt * std::sin(tiltAngle), 1);
+    P = back * keystone * toCentre * P;
+    cv::warpPerspective(img,     img,     P, img.size(), cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    cv::warpPerspective(outline, outline, P, outline.size(), cv::INTER_NEAREST);
     std::vector<uchar> jpeg;
     cv::imencode(".jpg", img, jpeg, {cv::IMWRITE_JPEG_QUALITY, 85});
     img = cv::imdecode(jpeg, cv::IMREAD_COLOR);
 
     cv::Mat bgra;
     cv::cvtColor(img, bgra, cv::COLOR_BGR2BGRA);
-    cv::insertChannel(mask, bgra, 3);
-    return bgra(cv::boundingRect(mask)).clone();
+    cv::insertChannel(outline, bgra, 3);
+    cv::Mat cut = bgra(cv::boundingRect(outline)).clone();
+    // The client sends at most 1024 px
+    return matcher_utils::limitSize(cut, 1024);
 }
 
 void printTallies(const std::vector<std::string>& names, std::map<std::string, Tally>& tallies,
@@ -119,7 +222,8 @@ void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath,
     for (int i = 0; i < samples; ++i) {
         const cv::Point2f c(X(rng), Y(rng));
         const cv::Point truth = matcher_utils::cellAt(grid, art.size(), c);
-        for (const MatchResult& r : handler.locate(simulateCutout(art, c, side, rng), names)) {
+        const cv::Mat cut = simulateCutout(art, c, side, rng);
+        for (const MatchResult& r : handler.locate(cut, names)) {
             Tally& t = tallies[r.matcherName];
             const bool hit = r.row == truth.y && r.col == truth.x;
             t.hits    += hit;

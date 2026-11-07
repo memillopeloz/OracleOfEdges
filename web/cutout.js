@@ -14,7 +14,8 @@
 //   4. Grow the seed through pixels passing a weaker threshold (dark parts of
 //      the print close to the table's colour), ignoring thin strands and
 //      dropping growth that leaks out to the photo edge.
-//   5. Close and open again, keep the main blob, and fill its holes.
+//   5. Close and open again (round brush), keep the main blob, fill its holes
+//      and round off jaggies.
 
 const BORDER_FRACTION = 0.04;   // width of the frame sampled as background
 const MORPH_FRACTION  = 0.008;  // morphology radius, relative to the longest side
@@ -166,27 +167,66 @@ function otsu(values) {
     return scale > 0 ? best / scale : 0;
 }
 
-// Square dilation (grow = true) or erosion of a 0/1 mask, radius r, via a summed-area table
+// Squared Euclidean distance transform along one line (Felzenszwalb & Huttenlocher):
+// d[q] = min over p of (q − p)² + f[p]
+function edt1d(f, n, d, v, z) {
+    let k = 0;
+    v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+    for (let q = 1; q < n; q++) {
+        let s;
+        while (true) {
+            const p = v[k];
+            s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p);
+            if (s > z[k]) break;
+            k--;
+        }
+        k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) {
+        while (z[k + 1] < q) k++;
+        const dq = q - v[k];
+        d[q] = dq * dq + f[v[k]];
+    }
+}
+
+// Squared distance from every pixel to the nearest pixel whose mask value is `target`
+// (a large value when there is none)
+function squaredDistance(mask, w, h, target) {
+    const BIG = 1e12;
+    const n = Math.max(w, h);
+    const f = new Float64Array(n), d = new Float64Array(n), v = new Int32Array(n), z = new Float64Array(n + 1);
+    const out = new Float64Array(w * h);
+    for (let x = 0; x < w; x++) {
+        for (let y = 0; y < h; y++) f[y] = mask[y * w + x] === target ? 0 : BIG;
+        edt1d(f, h, d, v, z);
+        for (let y = 0; y < h; y++) out[y * w + x] = d[y];
+    }
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) f[x] = out[y * w + x];
+        edt1d(f, w, d, v, z);
+        for (let x = 0; x < w; x++) out[y * w + x] = d[x];
+    }
+    return out;
+}
+
+// Dilation (grow = true) or erosion of a 0/1 mask by a disc of radius r. A round
+// brush keeps curves round; a square one leaves stair steps on knobs and sockets.
+// The photo edge counts as neither piece nor table, so erosion doesn't eat from it.
 function morph(mask, w, h, r, grow) {
-    const W = w + 1;
-    const sat = new Int32Array(W * (h + 1));
-    for (let y = 0; y < h; y++) {
-        let rowSum = 0;
-        for (let x = 0; x < w; x++) {
-            rowSum += mask[y * w + x];
-            sat[(y + 1) * W + x + 1] = sat[y * W + x + 1] + rowSum;
-        }
-    }
+    const d2 = squaredDistance(mask, w, h, grow ? 1 : 0);
     const out = new Uint8Array(w * h);
-    for (let y = 0; y < h; y++) {
-        const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
-        for (let x = 0; x < w; x++) {
-            const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
-            const sum = sat[y1 * W + x1] - sat[y0 * W + x1] - sat[y1 * W + x0] + sat[y0 * W + x0];
-            const area = (y1 - y0) * (x1 - x0);
-            out[y * w + x] = grow ? (sum > 0 ? 1 : 0) : (sum === area ? 1 : 0);
-        }
-    }
+    for (let p = 0; p < w * h; p++) out[p] = grow ? (d2[p] <= r * r ? 1 : 0) : (d2[p] > r * r ? 1 : 0);
+    return out;
+}
+
+// Rounds off pixel-level jaggies: blurs the mask (two box passes ≈ Gaussian) and
+// keeps what stays above one half
+function smoothMask(mask, w, h, r) {
+    const once = boxMean(mask, w, h, r);
+    const twice = boxMean(once, w, h, r);
+    const out = new Uint8Array(w * h);
+    for (let p = 0; p < w * h; p++) out[p] = twice[p] > 0.5 ? 1 : 0;
     return out;
 }
 
@@ -317,7 +357,7 @@ export function findPiece(rgba, w, h, sensitivity = 1) {
         let main = 0;
         for (let i = 1; i < parts.blobs.length; i++) if (parts.blobs[i].size > parts.blobs[main].size) main = i;
         for (let p = 0; p < w * h; p++) blob[p] = parts.labels[p] === main ? 1 : 0;
-        const filled = fillHoles(blob, w, h);
+        const filled = fillHoles(smoothMask(fillHoles(blob, w, h), w, h, Math.max(1, Math.round(r / 2))), w, h);
 
         let x0 = w, y0 = h, x1 = -1, y1 = -1, area = 0;
         for (let y = 0; y < h; y++) {

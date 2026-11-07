@@ -5,8 +5,9 @@
 #include "GridConfig.hpp"
 #include "Matcher.hpp"
 
-// ORB features of the piece matched (brute-force Hamming + Lowe's ratio test)
-// against ORB features of the whole artwork. A RANSAC homography maps the piece's
+// ORB features of the piece matched (brute-force Hamming + a ratio test against
+// the nearest artwork feature at least a piece away) against ORB features of the
+// whole artwork. A RANSAC homography maps the piece's
 // centre into the artwork; with too few inliers, cells vote by matched keypoints.
 // Robust to rotation and moderate scale change.
 class KeypointMatcher : public Matcher {
@@ -20,8 +21,12 @@ public:
     //         just leaves no features, and match() then reports an error
     void prepare(const cv::Mat& artwork, const GridConfig& grid) override;
 
-    // Matches the piece's ORB features (12-level pyramid, inside the outline)
-    // against the artwork's, keeps those passing the ratio test, fits a RANSAC
+    // Shrinks the piece to about twice its footprint in the artwork (when the
+    // piece count is known), detects ORB features inside the outline with a low
+    // FAST threshold (the print is soft) and matches them against the artwork's.
+    // A match is kept when it beats, by the ratio test, the nearest artwork
+    // feature at least a piece away (near neighbours are the same spot, not a
+    // rival); a match whose 8 nearest all lie together is kept too. Fits a RANSAC
     // homography and maps the piece's centre into the artwork. Without enough
     // inliers, the cell holding the most matched features wins instead.
     // In:     piece — normalized piece
@@ -37,6 +42,7 @@ public:
 private:
     GridConfig                grid_;
     cv::Size                  artworkSize_;
+    double                    pieceSide_ = 0.0; // expected piece side, artwork px; 0 = unknown
     std::vector<cv::KeyPoint> keypoints_;   // artwork keypoints, artwork px
     std::vector<cv::Point>    keypointCell_; // (col, row) per keypoint
     cv::Mat                   descriptors_;  // one row per keypoint

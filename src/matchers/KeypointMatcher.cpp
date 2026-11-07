@@ -1,6 +1,7 @@
 #include "KeypointMatcher.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <map>
 #include <utility>
 #include <opencv2/calib3d.hpp>
@@ -14,9 +15,14 @@ constexpr int    ARTWORK_FEATURES    = 120000; // minimum, spread evenly across 
 constexpr int    FEATURES_PER_PIECE  = 150;    //   large puzzles, capped to bound matching time
 constexpr int    MAX_ARTWORK_FEATURES = 800000;
 constexpr int    PIECE_FEATURES      = 1500;
-constexpr int    PIECE_PYRAMID       = 12;    // 1.3^11 ≈ 18× — photo may be far larger than
-constexpr float  PIECE_PYRAMID_SCALE = 1.3f;  //   the piece's footprint in the artwork
+constexpr double PIECE_SIDE_FACTOR   = 2.0;   // piece shrunk to this × its artwork footprint
+constexpr int    PIECE_PYRAMID       = 8;     // 1.3^7 ≈ 6× below that
+constexpr int    BLIND_PYRAMID       = 12;    // piece count unknown: 1.3^11 ≈ 18×, photo may be
+constexpr float  PIECE_PYRAMID_SCALE = 1.3f;  //   far larger than its footprint
+constexpr int    PIECE_FAST_THRESHOLD = 8;    // ORB default 20; the soft print has weak corners
 constexpr int    ORB_BORDER          = 31;    // ORB's default edge threshold
+constexpr int    NEIGHBOURS          = 8;     // artwork candidates per piece feature
+constexpr double RIVAL_DISTANCE      = 1.0;   // in piece sides: nearer neighbours aren't rivals
 constexpr float  RATIO_TEST          = 0.75f;
 constexpr int    MIN_HOMOGRAPHY_PTS  = 8;
 constexpr int    MIN_INLIERS         = 6;
@@ -26,20 +32,21 @@ constexpr float  FULL_CONFIDENCE_INLIERS = 20.0f;
 // BFMatcher limit on descriptors per train set (OpenCV's IMGIDX_ONE)
 constexpr int MATCH_CHUNK = 200000;
 
-// Two nearest artwork descriptors per piece descriptor (Hamming distance),
+// The k nearest artwork descriptors per piece descriptor (Hamming distance),
 // searching the artwork in chunks to stay under BFMatcher's train-set limit
 // In:     query — piece ORB descriptors, one CV_8U row each
 //         train — artwork ORB descriptors, same format
-// Out:    per query row, up to 2 matches sorted by distance; trainIdx indexes
+//         k     — neighbours wanted (≥ 1)
+// Out:    per query row, up to k matches sorted by distance; trainIdx indexes
 //         the whole of train
 // Errors: may throw cv::Exception if the descriptor widths differ
-std::vector<std::vector<cv::DMatch>> twoNearest(const cv::Mat& query, const cv::Mat& train) {
+std::vector<std::vector<cv::DMatch>> kNearest(const cv::Mat& query, const cv::Mat& train, int k) {
     std::vector<std::vector<cv::DMatch>> best(query.rows);
     cv::BFMatcher matcher(cv::NORM_HAMMING);
     for (int first = 0; first < train.rows; first += MATCH_CHUNK) {
         const int last = std::min(first + MATCH_CHUNK, train.rows);
         std::vector<std::vector<cv::DMatch>> knn;
-        matcher.knnMatch(query, train.rowRange(first, last), knn, 2);
+        matcher.knnMatch(query, train.rowRange(first, last), knn, k);
         for (const auto& candidates : knn)
             for (cv::DMatch m : candidates) {
                 m.trainIdx += first;
@@ -47,7 +54,7 @@ std::vector<std::vector<cv::DMatch>> twoNearest(const cv::Mat& query, const cv::
                 b.push_back(m);
                 std::sort(b.begin(), b.end(),
                           [](const cv::DMatch& x, const cv::DMatch& y) { return x.distance < y.distance; });
-                if (b.size() > 2)
+                if (static_cast<int>(b.size()) > k)
                     b.pop_back();
             }
     }
@@ -59,6 +66,7 @@ std::vector<std::vector<cv::DMatch>> twoNearest(const cv::Mat& query, const cv::
 void KeypointMatcher::prepare(const cv::Mat& artwork, const GridConfig& grid) {
     grid_        = grid;
     artworkSize_ = artwork.size();
+    pieceSide_   = grid.pieceSide(artworkSize_);
     keypoints_.clear();
     keypointCell_.clear();
     descriptors_.release();
@@ -94,24 +102,42 @@ void KeypointMatcher::prepare(const cv::Mat& artwork, const GridConfig& grid) {
 MatchResult KeypointMatcher::match(const Piece& piece) const {
     const auto start = std::chrono::steady_clock::now();
 
-    cv::Mat gray;
+    cv::Mat gray, mask = piece.mask;
     cv::cvtColor(piece.bgr, gray, cv::COLOR_BGR2GRAY);
+
+    // Bring the piece near its artwork scale; the pyramid covers the rest
+    const double shrink = pieceSide_ > 0.0 && piece.area > 0.0
+                        ? PIECE_SIDE_FACTOR * pieceSide_ / std::sqrt(piece.area) : 1.0;
+    if (shrink < 1.0) {
+        cv::resize(gray, gray, cv::Size(), shrink, shrink, cv::INTER_AREA);
+        cv::resize(mask, mask, gray.size(), 0.0, 0.0, cv::INTER_NEAREST);
+    }
 
     std::vector<cv::KeyPoint> kps;
     cv::Mat desc;
-    cv::ORB::create(PIECE_FEATURES, PIECE_PYRAMID_SCALE, PIECE_PYRAMID)
-        ->detectAndCompute(gray, piece.mask, kps, desc);
+    cv::ORB::create(PIECE_FEATURES, PIECE_PYRAMID_SCALE, pieceSide_ > 0.0 ? PIECE_PYRAMID : BLIND_PYRAMID,
+                    ORB_BORDER, 0, 2, cv::ORB::HARRIS_SCORE, ORB_BORDER, PIECE_FAST_THRESHOLD)
+        ->detectAndCompute(gray, mask, kps, desc);
 
+    // Ratio test against the nearest neighbour lying at least a piece away
+    const double rivalPx = RIVAL_DISTANCE * pieceSide_;
     std::vector<cv::Point2f> piecePts, artPts;
     std::vector<int>         artIdx;
     if (!desc.empty() && !descriptors_.empty()) {
-        const std::vector<std::vector<cv::DMatch>> knn = twoNearest(desc, descriptors_);
-        for (const auto& m : knn)
-            if (m.size() == 2 && m[0].distance < RATIO_TEST * m[1].distance) {
+        const std::vector<std::vector<cv::DMatch>> knn = kNearest(desc, descriptors_, NEIGHBOURS);
+        for (const auto& m : knn) {
+            const cv::DMatch* rival = nullptr;
+            for (size_t j = 1; j < m.size() && rival == nullptr; ++j)
+                if (cv::norm(keypoints_[m[j].trainIdx].pt - keypoints_[m[0].trainIdx].pt) > rivalPx)
+                    rival = &m[j];
+            const bool keep = rival != nullptr ? m[0].distance < RATIO_TEST * rival->distance
+                                               : m.size() > 1;
+            if (keep) {
                 piecePts.push_back(kps[m[0].queryIdx].pt);
                 artPts.push_back(keypoints_[m[0].trainIdx].pt);
                 artIdx.push_back(m[0].trainIdx);
             }
+        }
     }
 
     cv::Point cell(-1, -1);

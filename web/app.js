@@ -1,9 +1,11 @@
 // Argus client: photo → outline preview → cut-out upload → results table.
 import { findPiece } from './cutout.js';
-import { cutoutPng, decodePhoto, drawOutline, workCopy } from './photo.js';
+import { OutlineEditor } from './editor.js';
+import { cutoutPng, decodePhoto, editMask, workCopy } from './photo.js';
 
 const MATCHER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#14b8a6'];
 const STORAGE_KEY    = 'argus.matchers';
+const MIN_EDITED_AREA = 400;   // mask pixels a hand-painted outline needs before it can be located
 
 const $ = (id) => document.getElementById(id);
 
@@ -12,7 +14,9 @@ const state = {
     photo: null,         // full-resolution ImageBitmap
     work: null,          // { canvas, rgba, w, h } downscaled copy used for detection
     found: null,         // findPiece() result
-    cutout: null,        // PNG Blob ready to upload
+    editor: null,        // OutlineEditor over the preview canvas
+    edited: false,       // outline touched up by hand since the last detection
+    cutout: null,        // PNG Blob uploaded last (shown with the results)
     busy: false,
 };
 
@@ -71,34 +75,38 @@ async function loadPhoto(file) {
     $('preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// Automatic outline at the current sensitivity, replacing any hand edits
 function detect() {
     const { rgba, w, h } = state.work;
-    const found = findPiece(rgba, w, h, Number($('sensitivity').value));
-    state.found = found;
-    state.cutout = null;
-    drawOutline($('preview-canvas'), state.work, found);
+    state.found = findPiece(rgba, w, h, Number($('sensitivity').value));
+    state.edited = false;
+    state.editor.load(state.photo, editMask(state.photo, state.work, state.found));
+    outlineChanged();
+}
+
+function outlineChanged() {
+    $('undo').disabled = !state.editor.canUndo();
     describeOutline();
     updateLocateButton();
-    if (outlineUsable()) {
-        cutoutPng(state.photo, state.work, found).then((blob) => {
-            if (state.found === found) {   // ignore if the outline changed meanwhile
-                state.cutout = blob;
-                updateLocateButton();
-            }
-        });
-    }
 }
 
 function outlineUsable() {
     const f = state.found;
-    return Boolean(f) && f.coverage > 0.002 && f.coverage < 0.8;
+    const automatic = Boolean(f) && f.coverage > 0.002 && f.coverage < 0.8;
+    return state.edited ? state.editor.area() > MIN_EDITED_AREA : automatic;
 }
 
 function describeOutline() {
     const f = state.found;
-    let text = 'Outline found — check it hugs the piece, then locate.';
+    let text = 'Outline found — check it hugs the piece (touch it up if needed), then locate.';
     let level = 'ok';
-    if (!f || f.coverage <= 0.002) {
+    if (state.edited) {
+        const ok = outlineUsable();
+        text = ok ? 'Outline touched up by hand.' : 'Paint over the piece with Add to outline it.';
+        level = ok ? 'ok' : 'bad';
+    } else if (!f || f.coverage <= 0.002) {
+        text = 'No piece found. Paint over it with Add, or retake on a plain surface that contrasts with it.';
+        level = 'bad';
         text = 'No piece found. Use a plain surface that contrasts with the piece.';
         level = 'bad';
     } else if (f.coverage >= 0.8) {
@@ -119,20 +127,20 @@ function describeOutline() {
 // ── Locate ──────────────────────────────────────────────────────────────────
 
 function updateLocateButton() {
-    const ready = Boolean(state.cutout) && selectedMatchers().length > 0 && !state.busy;
+    const ready = Boolean(state.photo) && outlineUsable() && selectedMatchers().length > 0 && !state.busy;
     $('locate').disabled = !ready;
     $('locate').textContent = state.busy ? 'Locating…' : 'Locate piece';
     $('locate').classList.toggle('loading', state.busy);
 }
 
 async function locate() {
-    const form = new FormData();
-    form.append('piece', state.cutout, 'piece.png');
-    for (const name of selectedMatchers()) form.append('matcher', name);
-
     state.busy = true;
     updateLocateButton();
     try {
+        state.cutout = await cutoutPng(state.photo, state.editor.edit);
+        const form = new FormData();
+        form.append('piece', state.cutout, 'piece.png');
+        for (const name of selectedMatchers()) form.append('matcher', name);
         const res = await fetch('/api/locate', { method: 'POST', body: form });
         const body = await res.json();
         if (!res.ok) throw new Error(body.error || `Server error ${res.status}`);
@@ -241,6 +249,18 @@ async function init() {
     for (const id of ['camera', 'gallery']) $(id).addEventListener('change', (e) => pickPhoto(e.target));
     $('retake').addEventListener('click', () => $('camera').click());
     $('locate').addEventListener('click', locate);
+
+    state.editor = new OutlineEditor($('preview-canvas'), () => { state.edited = true; outlineChanged(); });
+    for (const button of document.querySelectorAll('.tool')) {
+        button.addEventListener('click', () => {
+            const on = button.getAttribute('aria-pressed') !== 'true';
+            for (const b of document.querySelectorAll('.tool')) b.setAttribute('aria-pressed', String(on && b === button));
+            state.editor.setTool(on ? button.dataset.tool : null);
+        });
+    }
+    $('undo').addEventListener('click', () => state.editor.undoLast());
+    $('reset').addEventListener('click', () => { if (state.work) detect(); });
+    $('brush').addEventListener('input', () => { state.editor.radius = Number($('brush').value); });
 
     let pending = false;
     $('sensitivity').addEventListener('input', () => {

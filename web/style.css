@@ -113,6 +113,11 @@ h3 { margin: 20px 0 8px; font-size: 0.8rem; text-transform: uppercase; letter-sp
     border-radius: 12px;
     background: #000;
 }
+#preview-canvas.painting { touch-action: none; cursor: crosshair; }
+.tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
+.tools .button { padding: 0 8px; min-height: 44px; }
+.button.tool[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--card); }
+.hint.small { font-size: 0.8rem; margin: 6px 0 0; }
 .status { margin: 12px 0 4px; font-size: 0.95rem; }
 .status[data-level="ok"]   { color: var(--ok); }
 .status[data-level="warn"] { color: var(--warn); }

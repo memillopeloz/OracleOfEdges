@@ -18,7 +18,7 @@ const webDir = fileURLToPath(new URL('../web/', import.meta.url));
 // The harness exposes cut(base64, sensitivity) using the page's own modules
 const HARNESS = `<!doctype html><meta charset="utf-8"><script type="module">
 import { findPiece } from '/cutout.js';
-import { cutoutPng, decodePhoto, drawOutline, workCopy } from '/photo.js';
+import { cutoutPng, decodePhoto, drawOutline, editMask, workCopy } from '/photo.js';
 const toBase64 = (blob) => new Promise((res) => {
     const r = new FileReader();
     r.onload = () => res(r.result.slice(r.result.indexOf(',') + 1));
@@ -40,7 +40,7 @@ window.cut = async (b64, sensitivity) => {
         coverage: found ? found.coverage : 0,
         touchesBorder: found ? found.touchesBorder : false,
         outline: outline.slice(outline.indexOf(',') + 1),
-        cutout: found ? await toBase64(await cutoutPng(photo, work, found)) : null,
+        cutout: found ? await toBase64(await cutoutPng(photo, editMask(photo, work, found))) : null,
     };
 };
 window.ready = true;

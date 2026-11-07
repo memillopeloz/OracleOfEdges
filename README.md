@@ -70,7 +70,9 @@ Then open `http://<laptop-ip>:8080` on your smartphone.
 1. Lay the piece face up on a plain surface that contrasts with it, with space
    all around, and tap **Take photo**.
 2. Check the yellow outline. If it misses part of the piece or takes in the
-   table, move the **Looser / Tighter** slider.
+   table, move the **Looser / Tighter** slider, then touch up what's left by
+   hand: pick **Add** or **Erase** and paint along the edge (**Undo** steps
+   back, **Reset** returns to the automatic outline).
 3. Pick the methods to run and tap **Locate piece**. The table shows each
    method's cell, confidence and time, and the artwork overview outlines each
    method's cell in its colour.
@@ -161,7 +163,8 @@ OracleOfEdges/
 ├── web/                   ← the page served at /
 │   ├── index.html, style.css
 │   ├── app.js             ← UI, upload, results
-│   ├── photo.js           ← decode, preview, cut-out PNG
+│   ├── photo.js           ← decode, preview, editable mask, cut-out PNG
+│   ├── editor.js          ← hand touch-up of the outline
 │   └── cutout.js          ← piece outline detection
 ├── tools/
 │   ├── bench.cpp          ← argus_bench

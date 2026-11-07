@@ -48,6 +48,21 @@
                 <span>Tighter</span>
             </label>
 
+            <h3>Touch up by hand</h3>
+            <div class="tools">
+                <button class="button tool" type="button" data-tool="add" aria-pressed="false">Add</button>
+                <button class="button tool" type="button" data-tool="erase" aria-pressed="false">Erase</button>
+                <button id="undo" class="button" type="button" disabled>Undo</button>
+                <button id="reset" class="button" type="button">Reset</button>
+            </div>
+            <label class="slider">
+                <span>Fine</span>
+                <input id="brush" type="range" min="0.004" max="0.06" step="0.002" value="0.02"
+                       aria-label="Brush size">
+                <span>Broad</span>
+            </label>
+            <p class="hint small">Pick Add or Erase and paint along the edge. Moving the Looser/Tighter slider or Reset starts over from the automatic outline.</p>
+
             <h3>Methods</h3>
             <div id="matchers" class="chips"></div>
 

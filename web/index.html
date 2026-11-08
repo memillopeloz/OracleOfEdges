@@ -89,6 +89,22 @@
                     <svg id="overview-marks" preserveAspectRatio="none"></svg>
                 </div>
             </div>
+            <p class="hint small">Tap a cell to zoom in and see where each method puts the piece.</p>
+
+            <div id="zoom" hidden>
+                <div class="zoom-head">
+                    <img id="zoom-thumb" alt="Your piece">
+                    <div>
+                        <h3 id="zoom-title"></h3>
+                        <div id="zoom-legend" class="legend"></div>
+                    </div>
+                    <button id="zoom-close" class="button" type="button" aria-label="Close zoom">✕</button>
+                </div>
+                <div class="frame zoom-frame">
+                    <img id="zoom-img" alt="Zoomed artwork">
+                    <svg id="zoom-marks" preserveAspectRatio="none"></svg>
+                </div>
+            </div>
         </section>
     </main>
 </body>

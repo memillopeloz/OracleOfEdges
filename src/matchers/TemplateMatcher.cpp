@@ -34,6 +34,8 @@ struct Peak {
     bool        found = false;
     double      score = -1.0;
     cv::Point2f center;          // in the searched image's px
+    int         orientation = 0; // index into the orientations searched
+    double      scale = 0.0;     // artwork px per piece px
 };
 
 struct Candidate {
@@ -67,6 +69,34 @@ Peak bestPeak(const cv::Mat& image, const cv::Mat& piece, double scale) {
         peak.center = cv::Point2f(loc.x + tmpl.cols / 2.0f, loc.y + tmpl.rows / 2.0f);
     }
     return peak;
+}
+
+// The piece outline placed where the template matched
+// In:     contour     — outline in the upright piece's px
+//         pieceSize   — size of the upright piece image
+//         orientation — 0 upright, 1/2/3 = turned 90° clockwise / 180° / 90° anticlockwise
+//         scale       — artwork px per piece px
+//         center      — where the turned, scaled piece's centre lies, artwork px
+// Out:    the outline in artwork px
+// Errors: none
+std::vector<cv::Point2f> placeOutline(const std::vector<cv::Point2f>& contour, const cv::Size& pieceSize,
+                                      int orientation, double scale, const cv::Point2f& center) {
+    const float w = static_cast<float>(pieceSize.width), h = static_cast<float>(pieceSize.height);
+    const bool  sideways = orientation % 2 == 1;
+    const cv::Point2f turnedCentre = sideways ? cv::Point2f(h / 2, w / 2) : cv::Point2f(w / 2, h / 2);
+    std::vector<cv::Point2f> placed;
+    for (const cv::Point2f& p : contour) {
+        // Same mapping as cv::rotate's ROTATE_90_CLOCKWISE / ROTATE_180 / ROTATE_90_COUNTERCLOCKWISE
+        cv::Point2f q = p;
+        if (orientation == 1)
+            q = cv::Point2f(h - p.y, p.x);
+        else if (orientation == 2)
+            q = cv::Point2f(w - p.x, h - p.y);
+        else if (orientation == 3)
+            q = cv::Point2f(p.y, w - p.x);
+        placed.push_back(center + (q - turnedCentre) * static_cast<float>(scale));
+    }
+    return placed;
 }
 
 } // namespace
@@ -135,8 +165,11 @@ MatchResult TemplateMatcher::match(const Piece& piece) const {
     for (size_t i = 0; i < refine; ++i) {
         const Peak p = bestPeak(work_, orientations[candidates[i].orientation],
                                 candidates[i].scale * workScale_);
-        if (p.found && p.score > best.score)
-            best = p;
+        if (p.found && p.score > best.score) {
+            best             = p;
+            best.orientation = candidates[i].orientation;
+            best.scale       = candidates[i].scale;
+        }
     }
 
     const cv::Point cell = best.found
@@ -144,7 +177,10 @@ MatchResult TemplateMatcher::match(const Piece& piece) const {
         : cv::Point(-1, -1);
     MatchResult result = matcher_utils::makeResult(name(), grid_, cell.y, cell.x,
                                                    static_cast<float>(best.score), start);
-    if (!best.found)
+    if (best.found)
+        result.outline = placeOutline(piece.contour, piece.bgr.size(), best.orientation, best.scale,
+                                      best.center * static_cast<float>(1.0 / workScale_));
+    else
         result.error = "Piece photo too small to search";
     return result;
 }

@@ -191,5 +191,7 @@ MatchResult HistogramMatcher::match(const Piece& piece) const {
                         ? (otherBest - dists[bestIdx]) / std::max(otherBest, 1e-6)
                         : 1.0;
     const float confidence = static_cast<float>(std::clamp(margin * CONF_GAIN, 0.0, 1.0));
-    return matcher_utils::makeResult(name(), grid_, tile.row, tile.col, confidence, start);
+    MatchResult result = matcher_utils::makeResult(name(), grid_, tile.row, tile.col, confidence, start);
+    result.outline = matcher_utils::rectOutline(tile.rect);
+    return result;
 }

@@ -1,6 +1,7 @@
 #include "WebHandler.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <future>
 #include <string>
 #include <utility>
@@ -18,6 +19,8 @@ namespace {
 
 // Longest side of the artwork overview shown on the page
 constexpr int OVERVIEW_MAX_DIM = 1600;
+// Longest side of an artwork region served for the zoomed view
+constexpr int REGION_MAX_DIM = 1600;
 
 // Fills an error response with the JSON body {"error": message}
 // In:     res        — response to fill
@@ -38,6 +41,20 @@ std::string lowercase(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
+}
+
+// Reads a non-negative integer query parameter
+// In:     req  — request
+//         name — parameter name
+// Out:    the value, or -1 when missing or not a non-negative integer
+// Errors: none
+int intParam(const httplib::Request& req, const std::string& name) {
+    int value = -1;
+    const std::string text = req.get_param_value(name);
+    if (!text.empty() && text.size() < 10 && std::all_of(text.begin(), text.end(),
+                                                         [](unsigned char c) { return std::isdigit(c); }))
+        value = std::stoi(text);
+    return value;
 }
 
 } // namespace
@@ -73,6 +90,7 @@ void WebHandler::registerRoutes(httplib::Server& svr) {
         const nlohmann::json info = {
             {"rows", grid_.rows},           {"cols", grid_.cols},
             {"rowLabels", grid_.rowLabels}, {"colLabels", grid_.colLabels},
+            {"artworkWidth", artwork_.cols}, {"artworkHeight", artwork_.rows},
             {"matchers", matchers},
         };
         res.set_content(info.dump(), "application/json");
@@ -81,6 +99,19 @@ void WebHandler::registerRoutes(httplib::Server& svr) {
     svr.Get("/api/artwork", [this](const httplib::Request&, httplib::Response& res) {
         res.set_content(reinterpret_cast<const char*>(overviewJpeg_.data()),
                         overviewJpeg_.size(), "image/jpeg");
+    });
+
+    svr.Get("/api/artwork/region", [this](const httplib::Request& req, httplib::Response& res) {
+        const cv::Rect asked(intParam(req, "x"), intParam(req, "y"), intParam(req, "w"), intParam(req, "h"));
+        const cv::Rect rect = asked & cv::Rect(0, 0, artwork_.cols, artwork_.rows);
+        if (asked.x < 0 || asked.y < 0 || rect.width <= 0 || rect.height <= 0) {
+            sendError(res, 400, "Expected x, y, w, h inside the artwork");
+        } else {
+            std::vector<uchar> jpeg;
+            cv::imencode(".jpg", matcher_utils::limitSize(artwork_(rect), REGION_MAX_DIM), jpeg,
+                         {cv::IMWRITE_JPEG_QUALITY, 85});
+            res.set_content(reinterpret_cast<const char*>(jpeg.data()), jpeg.size(), "image/jpeg");
+        }
     });
 
     svr.Post("/api/locate", [this](const httplib::Request& req, httplib::Response& res) {
@@ -100,13 +131,17 @@ void WebHandler::registerRoutes(httplib::Server& svr) {
             sendError(res, 400, "No matcher selected");
         } else {
             nlohmann::json results = nlohmann::json::array();
-            for (const MatchResult& r : locate(image, selected))
+            for (const MatchResult& r : locate(image, selected)) {
+                nlohmann::json outline = nlohmann::json::array();
+                for (const cv::Point2f& p : r.outline)
+                    outline.push_back({std::lround(p.x), std::lround(p.y)});
                 results.push_back({
                     {"matcher", r.matcherName}, {"coord", r.coord},
                     {"row", r.row},             {"col", r.col},
                     {"confidence", r.confidence}, {"timeMs", r.timeMs},
-                    {"error", r.error},
+                    {"error", r.error},         {"outline", outline},
                 });
+            }
             res.set_content(nlohmann::json{{"results", results}}.dump(), "application/json");
         }
     });

@@ -134,6 +134,7 @@ MatchResult MLMatcher::match(const Piece& piece) const {
 
         const matcher_utils::Tile& tile = tiles_[loc.x];
         result = matcher_utils::makeResult(name(), grid_, tile.row, tile.col, static_cast<float>(best), start);
+        result.outline = matcher_utils::rectOutline(tile.rect);
     }
     return result;
 }

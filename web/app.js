@@ -5,6 +5,8 @@ import { cutoutPng, decodePhoto, editMask, workCopy } from './photo.js';
 
 const MATCHER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ec4899', '#8b5cf6', '#14b8a6'];
 const STORAGE_KEY    = 'argus.matchers';
+const ZOOM_MARGIN    = 0.12;  // border around a zoomed cell, as a fraction of the cell
+const SPOT_RADIUS    = 0.06;  // overview spot radius, in cells
 const MIN_EDITED_AREA = 400;   // mask pixels a hand-painted outline needs before it can be located
 
 const $ = (id) => document.getElementById(id);
@@ -17,6 +19,8 @@ const state = {
     editor: null,        // OutlineEditor over the preview canvas
     edited: false,       // outline touched up by hand since the last detection
     cutout: null,        // PNG Blob uploaded last (shown with the results)
+    results: [],         // successful results of the last locate, for the overview and zoom
+    zoomCell: null,      // { row, col } shown zoomed, or null
     busy: false,
 };
 
@@ -155,6 +159,8 @@ async function locate() {
 
 function showError(message) {
     $('results').hidden = false;
+    state.results = [];
+    closeZoom();
     $('result-rows').replaceChildren();
     $('overview-marks').replaceChildren();
     const row = document.createElement('tr');
@@ -201,13 +207,18 @@ function renderResults(results) {
         return tr;
     });
     $('result-rows').replaceChildren(...rows);
-    drawOverview(results.filter((r) => !r.error && r.row >= 0));
+    state.results = results.filter((r) => !r.error && r.row >= 0);
+    state.zoomCell = null;
+    $('zoom').hidden = true;
+    drawOverview();
     $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// Grid over the artwork, with each matcher's cell outlined in its colour
-function drawOverview(results) {
-    const { rows, cols, rowLabels, colLabels } = state.info;
+// Grid over the artwork, with each matcher's cell outlined in its colour, a
+// spot where it puts the piece, and the zoomed cell (if any) dashed
+function drawOverview() {
+    const results = state.results;
+    const { rows, cols, rowLabels, colLabels, artworkWidth, artworkHeight } = state.info;
     const NS = 'http://www.w3.org/2000/svg';
     const svg = $('overview-marks');
     svg.setAttribute('viewBox', `0 0 ${cols} ${rows}`);
@@ -233,8 +244,117 @@ function drawOverview(results) {
         rect.style.fill = colorOf(r.matcher);
         svg.append(rect);
     }
+    // Cells aren't square on screen: the ellipse's radii make the spot round
+    const aspect = (artworkWidth / cols) / (artworkHeight / rows);
+    for (const r of results) {
+        const c = outlineCentre(r.outline);
+        if (c) {
+            const spot = document.createElementNS(NS, 'ellipse');
+            spot.setAttribute('cx', c[0] * cols / artworkWidth);
+            spot.setAttribute('cy', c[1] * rows / artworkHeight);
+            spot.setAttribute('rx', SPOT_RADIUS);
+            spot.setAttribute('ry', SPOT_RADIUS * aspect);
+            spot.setAttribute('class', 'spot');
+            spot.style.fill = colorOf(r.matcher);
+            svg.append(spot);
+        }
+    }
+    if (state.zoomCell) {
+        const rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('x', state.zoomCell.col);
+        rect.setAttribute('y', state.zoomCell.row);
+        rect.setAttribute('width', 1);
+        rect.setAttribute('height', 1);
+        rect.setAttribute('class', 'chosen');
+        svg.append(rect);
+    }
     $('overview-cols').replaceChildren(...colLabels.map((l) => Object.assign(document.createElement('span'), { textContent: l })));
     $('overview-rows').replaceChildren(...rowLabels.map((l) => Object.assign(document.createElement('span'), { textContent: l })));
+}
+
+// ── Zoom ────────────────────────────────────────────────────────────────────
+
+// Centre of an outline's bounding box, or null for an empty outline
+function outlineCentre(outline) {
+    let centre = null;
+    if (outline && outline.length) {
+        const xs = outline.map((p) => p[0]), ys = outline.map((p) => p[1]);
+        centre = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+    }
+    return centre;
+}
+
+// Artwork rectangle of a cell, as GridConfig::cellRect slices it
+function cellRect(row, col) {
+    const { rows, cols, artworkWidth: W, artworkHeight: H } = state.info;
+    const x0 = Math.floor(col * W / cols), x1 = Math.floor((col + 1) * W / cols);
+    const y0 = Math.floor(row * H / rows), y1 = Math.floor((row + 1) * H / rows);
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+// Shows a cell of the artwork at full resolution with every matcher's outline
+function openZoom(row, col) {
+    const { rowLabels, colLabels, artworkWidth: W, artworkHeight: H } = state.info;
+    const cell = cellRect(row, col);
+    const m = Math.round(Math.max(cell.w, cell.h) * ZOOM_MARGIN);
+    const x0 = Math.max(0, cell.x - m), y0 = Math.max(0, cell.y - m);
+    const region = { x: x0, y: y0, w: Math.min(W, cell.x + cell.w + m) - x0, h: Math.min(H, cell.y + cell.h + m) - y0 };
+    state.zoomCell = { row, col };
+    drawOverview();
+
+    $('zoom').hidden = false;
+    $('zoom-title').textContent = `Cell ${rowLabels[row]}${colLabels[col]}`;
+    $('zoom-thumb').src = $('piece-thumb').src;
+    const frame = document.querySelector('.zoom-frame');
+    frame.classList.add('loading');
+    const img = $('zoom-img');
+    img.onload = () => frame.classList.remove('loading');
+    img.src = `/api/artwork/region?x=${region.x}&y=${region.y}&w=${region.w}&h=${region.h}`;
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = $('zoom-marks');
+    svg.setAttribute('viewBox', `${region.x} ${region.y} ${region.w} ${region.h}`);
+    const cellBox = document.createElementNS(NS, 'rect');
+    for (const [k, v] of Object.entries({ x: cell.x, y: cell.y, width: cell.w, height: cell.h })) cellBox.setAttribute(k, v);
+    cellBox.setAttribute('class', 'chosen');
+    const marks = [cellBox];
+    const legend = [];
+    for (const r of state.results) {
+        const c = outlineCentre(r.outline);
+        const inView = c && c[0] >= region.x && c[0] < region.x + region.w && c[1] >= region.y && c[1] < region.y + region.h;
+        if (inView) {
+            const poly = document.createElementNS(NS, 'polygon');
+            poly.setAttribute('points', r.outline.map((p) => p.join(',')).join(' '));
+            poly.setAttribute('class', 'outline');
+            poly.style.stroke = colorOf(r.matcher);
+            poly.style.fill = colorOf(r.matcher);
+            marks.push(poly);
+        }
+        const item = document.createElement('span');
+        item.innerHTML = '<span class="dot"></span>';
+        item.firstChild.style.background = colorOf(r.matcher);
+        item.append(inView ? r.matcher : `${r.matcher} (${r.coord})`);
+        if (!inView) item.style.opacity = 0.6;
+        legend.push(item);
+    }
+    svg.replaceChildren(...marks);
+    $('zoom-legend').replaceChildren(...legend);
+    $('zoom').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeZoom() {
+    state.zoomCell = null;
+    $('zoom').hidden = true;
+    if (state.info) drawOverview();
+}
+
+// Tap on the overview → zoom into that cell
+function overviewTap(e) {
+    const { rows, cols } = state.info;
+    const r = e.currentTarget.getBoundingClientRect();
+    const col = Math.floor((e.clientX - r.left) / r.width * cols);
+    const row = Math.floor((e.clientY - r.top) / r.height * rows);
+    if (row >= 0 && row < rows && col >= 0 && col < cols) openZoom(row, col);
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -249,6 +369,8 @@ async function init() {
     for (const id of ['camera', 'gallery']) $(id).addEventListener('change', (e) => pickPhoto(e.target));
     $('retake').addEventListener('click', () => $('camera').click());
     $('locate').addEventListener('click', locate);
+    document.querySelector('.overview .frame').addEventListener('click', overviewTap);
+    $('zoom-close').addEventListener('click', closeZoom);
 
     state.editor = new OutlineEditor($('preview-canvas'), () => { state.edited = true; outlineChanged(); });
     for (const button of document.querySelectorAll('.tool')) {

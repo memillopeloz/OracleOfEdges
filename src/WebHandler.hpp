@@ -22,14 +22,18 @@ public:
 
     // Adds the JSON API used by the web page:
     //   GET  /api/info     grid layout and matchers: {rows, cols, rowLabels, colLabels,
-    //                      matchers: [{name, available}]}
+    //                      artworkWidth, artworkHeight, matchers: [{name, available}]}
     //   GET  /api/artwork  downscaled artwork JPEG for the overview
+    //   GET  /api/artwork/region?x=&y=&w=&h=   JPEG of that artwork rectangle (clipped
+    //                      to the artwork), longest side at most 1600 px
     //   POST /api/locate   multipart: "piece" = PNG cut-out (alpha = outline), one
     //                      "matcher" field per selected matcher →
-    //                      {results: [{matcher, coord, row, col, confidence, timeMs, error}]}
+    //                      {results: [{matcher, coord, row, col, confidence, timeMs, error,
+    //                      outline: [[x, y], …] in artwork px, empty if unknown}]}
     // In:     svr — server to register on; this handler must outlive it
     // Out:    none
-    // Errors: /api/locate answers 400 {error} when the piece is missing or
+    // Errors: /api/artwork/region answers 400 {error} for a missing parameter or a
+    //         rectangle outside the artwork. /api/locate answers 400 {error} when the piece is missing or
     //         undecodable, or no matcher is selected. Per-matcher failures come
     //         back as a result with a non-empty "error", not as an HTTP error.
     void registerRoutes(httplib::Server& svr);

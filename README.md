@@ -75,7 +75,10 @@ Then open `http://<laptop-ip>:8080` on your smartphone.
    back, **Reset** returns to the automatic outline).
 3. Pick the methods to run and tap **Locate piece**. The table shows each
    method's cell, confidence and time, and the artwork overview outlines each
-   method's cell in its colour.
+   method's cell in its colour, with a dot where it puts the piece.
+4. Tap a cell on the overview to zoom in: the cell is shown at full resolution
+   with each method's estimate of the piece outline drawn in its colour, so you
+   can compare the artwork there with the piece in your hand.
 
 ## Benchmark
 

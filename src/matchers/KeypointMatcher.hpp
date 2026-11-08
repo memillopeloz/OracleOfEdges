@@ -40,6 +40,23 @@ public:
     std::string name() const override { return "Keypoint"; }
 
 private:
+    // The piece outline where the geometric match puts it: a similarity
+    // (rotation, scale, shift) fitted to the homography's inliers, or a
+    // piece-sized square at the matched centre when that fit is implausible
+    // In:     contour    — piece outline, Piece px
+    //         shrink     — factor the piece was resized by before ORB (≤ 1)
+    //         piecePts   — matched points in the resized piece
+    //         artPts     — their artwork points
+    //         inlierMask — homography RANSAC inliers, one flag per pair
+    //         centre     — piece centre mapped by the homography, artwork px
+    // Out:    the outline in artwork px; empty if neither placement is possible
+    // Errors: none
+    std::vector<cv::Point2f> placeOutline(const std::vector<cv::Point2f>& contour, double shrink,
+                                          const std::vector<cv::Point2f>& piecePts,
+                                          const std::vector<cv::Point2f>& artPts,
+                                          const std::vector<unsigned char>& inlierMask,
+                                          const cv::Point2f& centre) const;
+
     GridConfig                grid_;
     cv::Size                  artworkSize_;
     double                    pieceSide_ = 0.0; // expected piece side, artwork px; 0 = unknown

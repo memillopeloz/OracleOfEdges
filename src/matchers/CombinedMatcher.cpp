@@ -35,6 +35,7 @@ MatchResult CombinedMatcher::match(const Piece& piece) const {
     const float confidence = useKeypoint ? kp.confidence : tm.confidence * KEYPOINT_GATE;
 
     MatchResult result = matcher_utils::makeResult(name(), grid_, chosen.row, chosen.col, confidence, start);
-    result.error = chosen.error;
+    result.error   = chosen.error;
+    result.outline = chosen.outline;
     return result;
 }

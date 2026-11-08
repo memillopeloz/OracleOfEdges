@@ -49,6 +49,7 @@ constexpr unsigned RANDOM_SEED     = 7;     // fixed, so runs are comparable
 
 struct Tally {
     int    hits      = 0;
+    int    onSpot    = 0;   // outline centre within a piece side of the true spot (simulated only)
     long   totalMs   = 0;
     double confHit   = 0.0;
     double confMiss  = 0.0;
@@ -208,23 +209,37 @@ cv::Mat simulateCutout(const cv::Mat& art, cv::Point2f c, double side, std::mt19
 }
 
 // Prints one row per matcher: accuracy, mean time, mean confidence on hits and
-// on misses
+// on misses, and (simulated runs) how often the outline lands on the true spot
 // In:     names   — matchers, in display order
 //         tallies — per-matcher totals (missing names read as zero)
 //         samples — number of pieces scored (> 0)
+//         spot    — whether the true positions are known (adds the "on spot" column)
 // Out:    none (stdout)
 // Errors: none
 void printTallies(const std::vector<std::string>& names, std::map<std::string, Tally>& tallies,
-                  int samples) {
-    std::printf("  %-10s %8s %10s %14s\n", "matcher", "accuracy", "avg time", "conf hit/miss");
+                  int samples, bool spot) {
+    std::printf("  %-10s %8s %10s %14s%s\n", "matcher", "accuracy", "avg time", "conf hit/miss",
+                spot ? "   on spot" : "");
     for (const std::string& n : names) {
         const Tally& t = tallies[n];
         const int misses = samples - t.hits;
-        std::printf("  %-10s %7d%% %7ld ms %8.2f / %.2f\n", n.c_str(), 100 * t.hits / samples,
+        std::printf("  %-10s %7d%% %7ld ms %8.2f / %.2f", n.c_str(), 100 * t.hits / samples,
                     t.totalMs / samples, t.hits ? t.confHit / t.hits : 0.0,
                     misses ? t.confMiss / misses : 0.0);
+        if (spot)
+            std::printf(" %9d%%", 100 * t.onSpot / samples);
+        std::printf("\n");
     }
     std::fflush(stdout);
+}
+
+// Centre of an outline's bounding box
+// In:     outline — polygon (non-empty)
+// Out:    the centre, same units
+// Errors: none
+cv::Point2f outlineCentre(const std::vector<cv::Point2f>& outline) {
+    const cv::Rect2f box = cv::boundingRect(outline);
+    return (box.tl() + box.br()) * 0.5f;
 }
 
 // Scores every matcher on simulated pieces at random positions (fixed seed) and
@@ -257,6 +272,7 @@ void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath,
             Tally& t = tallies[r.matcherName];
             const bool hit = r.row == truth.y && r.col == truth.x;
             t.hits    += hit;
+            t.onSpot  += !r.outline.empty() && cv::norm(outlineCentre(r.outline) - c) <= side;
             t.totalMs += r.timeMs;
             (hit ? t.confHit : t.confMiss) += r.confidence;
         }
@@ -264,7 +280,7 @@ void runBench(const cv::Mat& art, GridConfig grid, const std::string& modelPath,
 
     std::printf("\npieces=%d (piece ≈ %.0f px in artwork), %d samples, prepare %ld ms\n",
                 grid.pieces, side, samples, prepareMs);
-    printTallies(names, tallies, samples);
+    printTallies(names, tallies, samples, true);
 }
 
 // True cell of a sample photo, from its file name ("C5" or "C5_2" → C5)
@@ -337,7 +353,7 @@ void runReal(const cv::Mat& art, const GridConfig& grid, const std::string& mode
 
     std::printf("\nreal cut-outs from %s: %d scored, prepare %ld ms\n", cutDir.c_str(), scored, prepareMs);
     if (scored > 0)
-        printTallies(names, tallies, scored);
+        printTallies(names, tallies, scored, false);
 }
 
 } // namespace

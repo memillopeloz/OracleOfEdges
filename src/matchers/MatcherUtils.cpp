@@ -1,6 +1,7 @@
 #include "MatcherUtils.hpp"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 #include <opencv2/imgproc.hpp>
 
 namespace matcher_utils {
@@ -10,6 +11,7 @@ namespace {
 constexpr int    PIECE_MAX_DIM = 800;   // uploaded piece is capped to this
 constexpr double FALLBACK_CORE = 0.6;   // centre fraction used when no outline is supplied
 constexpr double ERODE_FRAC    = 0.02;  // mask erosion, as a fraction of the piece's size
+constexpr double CONTOUR_EPS   = 0.004; // outline simplification, as a fraction of the piece's size
 
 // Rotates about the centre, enlarging the canvas so nothing is cut off
 // In:     img           — any image
@@ -135,6 +137,18 @@ Piece makePiece(const cv::Mat& image) {
         piece.mask = mask(box).clone();
         piece.area = cv::countNonZero(piece.mask);
 
+        // Outline for drawing the piece where a matcher puts it
+        std::vector<std::vector<cv::Point>> outlines;
+        cv::findContours(piece.mask, outlines, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        if (!outlines.empty()) {
+            const auto biggest = std::max_element(outlines.begin(), outlines.end(),
+                [](const auto& a, const auto& b) { return a.size() < b.size(); });
+            std::vector<cv::Point> simple;
+            cv::approxPolyDP(*biggest, simple, CONTOUR_EPS * std::max(box.width, box.height), true);
+            for (const cv::Point& p : simple)
+                piece.contour.emplace_back(p.x + 0.5f, p.y + 0.5f);
+        }
+
         // Drop the outline's fringe, where background colour bleeds into the piece
         const int r = std::max(1, static_cast<int>(ERODE_FRAC * std::max(box.width, box.height)));
         cv::erode(piece.mask, piece.mask,
@@ -187,6 +201,17 @@ cv::Point cellAt(const GridConfig& grid, const cv::Size& artworkSize, const cv::
         found = cv::Point(col, row);
     }
     return found;
+}
+
+std::vector<cv::Point2f> squareOutline(const cv::Point2f& center, double side) {
+    const float h = static_cast<float>(side / 2.0);
+    return {center + cv::Point2f(-h, -h), center + cv::Point2f(h, -h),
+            center + cv::Point2f(h, h),   center + cv::Point2f(-h, h)};
+}
+
+std::vector<cv::Point2f> rectOutline(const cv::Rect& rect) {
+    const cv::Point2f tl(rect.tl()), br(rect.br());
+    return {tl, cv::Point2f(br.x, tl.y), br, cv::Point2f(tl.x, br.y)};
 }
 
 MatchResult makeResult(const std::string& matcherName, const GridConfig& grid,

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 #include <utility>
+#include <vector>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -28,6 +29,11 @@ constexpr int    MIN_HOMOGRAPHY_PTS  = 8;
 constexpr int    MIN_INLIERS         = 6;
 constexpr double RANSAC_REPROJ_PX    = 8.0;   // in artwork px
 constexpr float  FULL_CONFIDENCE_INLIERS = 20.0f;
+// The outline is placed by a similarity fitted to the homography's inliers
+// (a homography from few, clustered points extrapolates wildly); a fitted size
+// outside this range of the expected piece side is not trusted.
+constexpr double MIN_OUTLINE_SIZE = 0.5;
+constexpr double MAX_OUTLINE_SIZE = 2.5;
 
 // BFMatcher limit on descriptors per train set (OpenCV's IMGIDX_ONE)
 constexpr int MATCH_CHUNK = 200000;
@@ -99,6 +105,36 @@ void KeypointMatcher::prepare(const cv::Mat& artwork, const GridConfig& grid) {
     }
 }
 
+std::vector<cv::Point2f> KeypointMatcher::placeOutline(const std::vector<cv::Point2f>& contour, double shrink,
+                                                       const std::vector<cv::Point2f>& piecePts,
+                                                       const std::vector<cv::Point2f>& artPts,
+                                                       const std::vector<unsigned char>& inlierMask,
+                                                       const cv::Point2f& centre) const {
+    std::vector<cv::Point2f> from, to, outline;
+    for (size_t i = 0; i < inlierMask.size(); ++i)
+        if (inlierMask[i]) {
+            from.push_back(piecePts[i]);
+            to.push_back(artPts[i]);
+        }
+    std::vector<cv::Point2f> scaled;
+    for (const cv::Point2f& p : contour)
+        scaled.push_back(p * static_cast<float>(shrink));
+
+    const cv::Mat S = from.size() >= 2 ? cv::estimateAffinePartial2D(from, to, cv::noArray(), cv::LMEDS) : cv::Mat();
+    if (!S.empty() && !scaled.empty()) {
+        cv::transform(scaled, outline, S);
+        const cv::Rect2f box = cv::boundingRect(outline);
+        const double size = std::sqrt(static_cast<double>(box.area()));
+        const bool plausible = pieceSide_ <= 0.0
+                            || (size >= MIN_OUTLINE_SIZE * pieceSide_ && size <= MAX_OUTLINE_SIZE * pieceSide_);
+        if (!plausible)
+            outline.clear();
+    }
+    if (outline.empty() && pieceSide_ > 0.0)
+        outline = matcher_utils::squareOutline(centre, pieceSide_);
+    return outline;
+}
+
 MatchResult KeypointMatcher::match(const Piece& piece) const {
     const auto start = std::chrono::steady_clock::now();
 
@@ -143,6 +179,7 @@ MatchResult KeypointMatcher::match(const Piece& piece) const {
     cv::Point cell(-1, -1);
     float     confidence = 0.0f;
     int       inliers    = 0;
+    std::vector<cv::Point2f> outline;
 
     if (static_cast<int>(piecePts.size()) >= MIN_HOMOGRAPHY_PTS) {
         std::vector<unsigned char> mask;
@@ -152,6 +189,7 @@ MatchResult KeypointMatcher::match(const Piece& piece) const {
             std::vector<cv::Point2f> centre = {cv::Point2f(gray.cols / 2.0f, gray.rows / 2.0f)}, mapped;
             cv::perspectiveTransform(centre, mapped, H);
             cell = matcher_utils::cellAt(grid_, artworkSize_, mapped[0]);
+            outline = placeOutline(piece.contour, std::min(1.0, shrink), piecePts, artPts, mask, mapped[0]);
             confidence = (static_cast<float>(inliers) / piecePts.size())
                        * std::min(1.0f, inliers / FULL_CONFIDENCE_INLIERS);
         }
@@ -165,6 +203,16 @@ MatchResult KeypointMatcher::match(const Piece& piece) const {
         const auto top = std::max_element(votes.begin(), votes.end(),
             [](const auto& a, const auto& b) { return a.second < b.second; });
         cell       = cv::Point(top->first.second, top->first.first);
+        // Where in that cell: the mean of the matches that voted for it
+        cv::Point2f sum(0.0f, 0.0f);
+        int voters = 0;
+        for (int idx : artIdx)
+            if (keypointCell_[idx] == cell) {
+                sum += keypoints_[idx].pt;
+                ++voters;
+            }
+        if (pieceSide_ > 0.0 && voters > 0)
+            outline = matcher_utils::squareOutline(sum / voters, pieceSide_);
         confidence = 0.5f * top->second / artIdx.size()
                    * std::min(1.0f, top->second / FULL_CONFIDENCE_INLIERS);
     }
@@ -172,5 +220,7 @@ MatchResult KeypointMatcher::match(const Piece& piece) const {
     MatchResult result = matcher_utils::makeResult(name(), grid_, cell.y, cell.x, confidence, start);
     if (cell.x < 0)
         result.error = "No distinctive features matched";
+    else
+        result.outline = outline;
     return result;
 }

@@ -67,6 +67,20 @@ std::vector<Tile> cellTiles(const GridConfig& grid, const cv::Size& artworkSize,
 // Errors: none
 cv::Point cellAt(const GridConfig& grid, const cv::Size& artworkSize, const cv::Point2f& pt);
 
+// Axis-aligned square around a point, as a closed polygon (for matchers that
+// know where the piece is but not its outline)
+// In:     center — in artwork px
+//         side   — square side, px
+// Out:    the 4 corners, clockwise from top-left
+// Errors: none
+std::vector<cv::Point2f> squareOutline(const cv::Point2f& center, double side);
+
+// A rectangle as a closed polygon
+// In:     rect — in artwork px
+// Out:    the 4 corners, clockwise from top-left
+// Errors: none
+std::vector<cv::Point2f> rectOutline(const cv::Rect& rect);
+
 // Assembles a result, stamping the coordinate label and the time since start
 // In:     matcherName — Matcher::name()
 //         grid        — for the label

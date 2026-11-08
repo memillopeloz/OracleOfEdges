@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 #include <opencv2/core.hpp>
 #include "GridConfig.hpp"
 
@@ -12,6 +13,10 @@ struct MatchResult {
     long   timeMs     = 0;      // processing time
     std::string matcherName;
     std::string error;          // empty on success; otherwise why no result was produced
+    // Where the piece lies, in artwork px, as a closed polygon: the piece's own
+    // outline when the matcher knows its pose, else a piece-sized box around the
+    // best spot. Empty when there is no answer or no position finer than the cell.
+    std::vector<cv::Point2f> outline;
 };
 
 // The piece photo, normalized once per request by matcher_utils::makePiece:
@@ -22,6 +27,7 @@ struct Piece {
     cv::Mat mask;         // CV_8U, same size; 255 on piece pixels (slightly eroded)
     cv::Mat core;         // CV_8UC3, largest axis-aligned square fully inside the piece
     double  area = 0.0;   // piece pixel count before erosion, in bgr's px
+    std::vector<cv::Point2f> contour;   // simplified outline before erosion, in bgr's px
 };
 
 // Abstract base — every matcher implements this interface.
